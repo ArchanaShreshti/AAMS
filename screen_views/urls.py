@@ -5,6 +5,7 @@ from .views.schedule_views import *
 from .views.dashboardSettings_views import *
 from .views.reports_view import * 
 from .views.machine_views import *
+from .views.machine_dashboard import *
 from Feedback.views import *
 from rest_framework.routers import DefaultRouter
 from rest_framework import routers
@@ -81,6 +82,10 @@ urlpatterns = [
     path('machinehealth/', MachineHealthView.as_view(), name='machineHealth'),
     path('technologiesparams/all', CustomTechnologyView.as_view({'get': 'list'}), name='technologiesparams_all'),                   #DashboardSettings-3   
     path('iso-standards/all', AlertLimitsViewSet.as_view({'get': 'list'}), name='iso-standards-all'),     
-    path('feedback/all/unique', FeedbackViewSet.as_view({'get': 'list'}), name='feedback-all')    
+    path('feedback/all/unique', FeedbackViewSet.as_view({'get': 'list'}), name='feedback-all'),
+
+
+    path('AAMS/fft/setValue', set_calibration_value_in_file), 
+      
 ]
                                            

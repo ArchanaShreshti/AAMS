@@ -1,7 +1,6 @@
 from django.conf import settings
 from django.http import JsonResponse
-from screen_views.constants import AXIS_ID_MAPPING, DEMO_MONGO_URI, PROD_MONGO_URI, TEST_MONGO_URI
-from screen_views.constants import UPDATE_FMAX_NO_OF_LINE_MAP, UPDATE_FMAX_NO_OF_LINE_OFFLINE_MAP
+from screen_views.constants import *
 import numpy as np
 from screen_views.utils import *
 import json
@@ -10,7 +9,7 @@ from django.views.decorators.http import require_http_methods
 
 # Access settings
 audio_directory = settings.AUDIO_DIRECTORY
-mongo_uri = settings.MONGO_URI
+# mongo_uri = settings.MONGO_URI
 
 def process_data(request):
     file_name = request.GET.get('file_name')
@@ -504,7 +503,6 @@ def start_timeseries(request):
         return JsonResponse({"Response": "Data not Found"}, status=500)
 
 from django.views.decorators.csrf import csrf_exempt
-from django.utils.timezone import utc
 from datetime import datetime, timedelta, timezone
 
 @csrf_exempt
@@ -515,7 +513,7 @@ def start_fft1(request):
         print("fft:", data)
 
         latest = False
-        start_date_time = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0).replace(tzinfo=utc)
+        start_date_time = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0).replace(tzinfo=timezone.utc)
         axis_mapping = {
             "H-Axis": "H",
             "V-Axis": "V",
@@ -539,7 +537,7 @@ def start_fft1(request):
         else:
             epoch_Date_Time = data["date_Time"]
 
-        data_date_time = datetime.utcfromtimestamp(int(epoch_Date_Time)).replace(tzinfo=utc)
+        data_date_time = datetime.fromtimestamp(int(epoch_Date_Time), tz=timezone.utc)
         time_difference = data_date_time - start_date_time
 
         bearingLocationDatas = db["BearingLocation"].find_one({"_id": ObjectId(data["Sensor_Name"])})
@@ -777,7 +775,7 @@ def start_parameter_trends(request):
             print("ParameterTrends:", data)
             
             # MongoDB connection setup (assuming you have a connection set up)
-            db = client[settings.MONGO_DB_NAME]
+            db = client[settings.MONGODB_NAME]
 
             bearing_location_id = data["Sensor_Name"]
             bearingLocationDatas = db["BearingLocation"].find_one({"_id": ObjectId(bearing_location_id)})
@@ -878,7 +876,6 @@ def start32BitRealTimefft(request):
     if request.method == "POST":
         try:
             # Use settings.GMT_TIMEZONE for timezone calculation
-            settings.GMT_TIMEZONE = settings.GMT_TIMEZONE
             start_date_time = int((datetime.now().astimezone(settings.GMT_TIMEZONE) + timedelta(days=-60)).timestamp())
             end_date_time = int((datetime.now().astimezone(settings.GMT_TIMEZONE)).timestamp())
             
@@ -940,7 +937,7 @@ def start32BitRealTimeValue(request):
 
             # MongoDB setup
             client = MongoClient(settings.MONGO_URI)
-            db = client[settings.MONGO_DB_NAME]
+            db = client[settings.MONGODB_NAME]
 
             bearingLocationDatas = db["BearingLocation"].find({"machineId": ObjectId(machineId)})
             final_data = {"data": {}}
@@ -1020,7 +1017,7 @@ def realtime_value_v3(request):
             return JsonResponse({"error": "Machine_Name and Type are required."}, status=400)
 
         client = MongoClient()
-        db = client[settings.MONGO_DB_NAME]
+        db = client[settings.MONGODB_NAME]
 
         bearing_locations = db["BearingLocation"].find({"machineId": ObjectId(machine_id)})
         iso_dict = isoStandardGetter(ObjectId(machine_id))
@@ -1070,7 +1067,7 @@ def realtime_value_v3(request):
                         "V": V if V else {"value": 0, "status": "normal"},
                         "A": A if A else {"value": 0, "status": "normal"},
                         "sensorName": bl["name"],
-                        "Time": datetime.utcfromtimestamp(DATETIME).strftime("%a, %d %b %Y %H:%M:%S GMT"),
+                        "Time": datetime.utcfromtimestamp(int(DATETIME)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
                         "bearingLocationType": location_type
                     }
 
@@ -1103,7 +1100,7 @@ def start_real_time_value_report_v3(request):
         }
 
         machine_id = data.get("Machine_Name")
-        db = client[settings.MONGO_DB_NAME]
+        db = client[settings.MONGODB_NAME]
 
         defaultData = {
             "0": {"status": "normal", "value": 0},
@@ -1316,7 +1313,7 @@ def start_hopnet_timeseries(request):
 
     try:
         data = json.loads(request.body)
-        db = client[settings.MONGO_DB_NAME]
+        db = client[settings.MONGODB_NAME]
         start_date_time = datetime.now(timezone.utc) - timedelta(days=1)
         data_date_time = datetime.utcfromtimestamp(int(str(data["date_time"]))).replace(tzinfo=timezone.utc)
         time_difference = data_date_time - start_date_time
@@ -1495,7 +1492,7 @@ def parameter_trends_view(request):
     try:
         data = json.loads(request.body)
         print("ParameterTrends:", data)
-        db = client[settings.MONGO_DB_NAME]
+        db = client[settings.MONGODB_NAME]
         bearing_location_id = data["sensor_id"]
         bearingLocationDatas = db["BearingLocation"].find_one({"_id": ObjectId(bearing_location_id)})
         end_time = int(datetime.now().astimezone(settings.GMT_TIMEZONE).timestamp())
@@ -1615,7 +1612,7 @@ def hopnet_realtime_value_report(request):
             "Temperature": "8"
         }
         machine_id = data["machine_id"]
-        db = client[settings.MONGO_DB_NAME]
+        db = client[settings.MONGODB_NAME]
         final_data = {"data": {}}
 
         default_data = {
@@ -1882,7 +1879,7 @@ def get_data(request):
 @csrf_exempt
 @require_http_methods(["GET"])
 def get_old_data(request):
-    db = client[settings.MONGO_DB_NAME]
+    db = client[settings.MONGODB_NAME]
     try:
         data = json.loads(request.body)
         print("ParameterTrends:", data)
@@ -2285,7 +2282,7 @@ def top10Fft(fft_array):
 @csrf_exempt
 @require_http_methods(["POST"])
 def start_top_10_fft(request):
-    db = client[settings.MONGO_DB_NAME]
+    db = client[settings.MONGODB_NAME]
     try:
         data = json.loads(request.body)
         latest = False
@@ -2727,7 +2724,7 @@ def fft_high_resolution1_view(request):
 
                         if latest:
                             start_date_time = int((datetime.now().astimezone(settings.GMT_TIMEZONE) + timedelta(days=-365)).timestamp())
-                            all_history = read_from_parquet((data["Sensor_Name"] + ".parquet", start_date_time, end_date_time, limit=1))
+                            all_history = read_from_parquet((data["Sensor_Name"]) + ".parquet", start_date_time, end_date_time, limit=1)
 
                             for index, row in all_history.iterrows():
                                 axis_name = str(list(json.loads(row['data']).keys())[0]) + "-Axis"
@@ -2864,7 +2861,7 @@ def set_calibration_value_in_file(request):
 @require_http_methods(["POST"])
 def startFftHighResolution(request):
     data = json.loads(request.body)
-    db = client[settings.MONGO_DB_NAME]
+    db = client[settings.MONGODB_NAME]
     print("fft: ",data)
     repeatAppend = int(data['repeat_Append'])
     latest = False

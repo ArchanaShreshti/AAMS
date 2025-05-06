@@ -17,8 +17,8 @@ import traceback
 from pathlib import Path
 import json
 
-client = MongoClient(settings.MONGO_URI)
-db = client[settings.APP_DB]
+client = MongoClient(settings.MONGODB_URI)
+db = client[settings.MONGODB_NAME]
 
 def isoStandardGetter(machineId):
     try:
