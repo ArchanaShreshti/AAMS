@@ -2836,6 +2836,304 @@ def fft_high_resolution1_view(request):
         return JsonResponse({"Response": "Data not Found"}, status=500)
 
 @csrf_exempt
+@require_http_methods(["POST"])
+def set_calibration_value_in_file(request):
+    try:
+        data = json.loads(request.body)
+
+        if "Analytics_Types" in data or data.get("Analytics_Types") == ['LF', 'MF', 'HF']:
+            update_field_in_parquet(
+                data['Sensor_Name'] + ".parquet",
+                machineId=data['Machine_Name'],
+                timestamp=data.get('date_Time'),
+                cutoff=data.get('Cutoff'),
+                floorNoiseThresholdPercentage=data.get('floorNoiseThresholdPercentage'),
+                floorNoiseAttenuationFactor=data.get('floorNoiseAttenuationFactor')
+            )
+        else:
+            return JsonResponse({"Response": "OM is not supported"}, status=404)
+
+        return JsonResponse({"Response": "Values are set"}, status=200)
+
+    except Exception as e:
+        print(traceback.print_exc())
+        print(e)
+        return JsonResponse({"Response": "Data not Found"}, status=500)
+    
+@csrf_exempt
+@require_http_methods(["POST"])
+def startFftHighResolution(request):
+    data = json.loads(request.body)
+    db = client[settings.MONGO_DB_NAME]
+    print("fft: ",data)
+    repeatAppend = int(data['repeat_Append'])
+    latest = False
+    try:
+        # start_date_time = datetime.now(timezone.utc) + timedelta(days=-1)
+        start_date_time = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        axis_mapping = {
+            "H-Axis": "H",
+            "V-Axis": "V",
+            "A-Axis": "A"
+        }
+        if "date_Time" not in data:
+            end_date_Time = int((datetime.now().astimezone(settings.GMT_TIMEZONE)).timestamp())
+            epoch_Data = list(db["ParameterTrend"].find({ "BearingLoactionId": ObjectId(data["Sensor_Name"]), "axis": axis_mapping[data["Axis_Id"]], "rawDataPresent": True, "epochTime": {"$gte": int(start_date_time.timestamp()), "$lte": end_date_Time} }).sort([("_id", -1)]).limit(1))
+            if epoch_Data != []:
+
+                epoch_Date_Time = epoch_Data[0]["epochTime"]
+            else:
+                epoch_Data = datetime.now(timezone.utc) + timedelta(days=-2)
+                epoch_Date_Time = int(epoch_Data.timestamp())
+                latest = True
+
+        else:
+            epoch_Date_Time = data["date_Time"]
+            
+        data_date_time = datetime.utcfromtimestamp(int(str(epoch_Date_Time))).replace(tzinfo=timezone.utc)
+        time_difference = data_date_time - start_date_time
+
+        bearingLocationDatas = db["BearingLocation"].find_one({"_id": ObjectId(data["Sensor_Name"])})
+        MachineDatas = db["Machine"].find_one({"_id": ObjectId(data["Machine_Name"])})
+        
+        RespondData = []
+        File_Data = []
+        # data_timestamp = ''
+        axis_Name = data["Axis_Id"]
+        
+        if data["Type"].lower() in ['velocity', 'acceleration']:
+            lowpass_values = (
+                        bearingLocationDatas[data["Type"].lower()].get('lowpassCutoffFrequency', 1000),
+                        bearingLocationDatas[data["Type"].lower()].get('lowpassOrder', 2)
+                    )
+            fmax = bearingLocationDatas.get('fmax', 25)
+            NoOflines = bearingLocationDatas.get('noOflines', 25)
+
+            # fmax, NoOflines = bearingLocationDatas['fmax'].get('lowpassCutoffFrequency', 25), bearingLocationDatas['noOflines'].get('lowpassCutoffFrequency', 125)
+            if (fmax, NoOflines) in update_fmax_noOfLine_map:
+                fmax, NoOflines = update_fmax_noOfLine_map[(fmax, NoOflines)]
+
+        if 'bearingLocationType' in bearingLocationDatas and bearingLocationDatas['bearingLocationType'] == "OFFLINE":
+            if latest:
+                start_date_Time = int((datetime.now().astimezone(settings.GMT_TIMEZONE) + timedelta(days=-int(365))).timestamp())
+                if "Analytics_Types" not in data or data['Analytics_Types'] == "OM":
+                    All_History = read_from_parquet(data["Sensor_Name"]+".parquet", start_date_Time, end_date_Time, limit = 1)
+                elif data['Analytics_Types'] in ['LF', 'MF', 'HF']:
+                    All_History = read_from_new_parquet(data["Sensor_Name"]+".parquet", data['Machine_Name'], start_date_Time, end_date_Time, limit = 1 )
+
+                # All_History = read_from_parquet(data["Sensor_Name"]+".parquet", start_date_Time, end_date_Time, limit = 100)
+
+
+                for index, row in All_History.iterrows():
+                    axis_Name = str(list(json.loads(row['data']).keys())[0]) + "-Axis"
+
+            else:
+                if "Analytics_Types" not in data or data['Analytics_Types'] == "OM":
+                    All_History = read_from_parquet(data["Sensor_Name"]+".parquet", int(epoch_Date_Time))
+                elif data['Analytics_Types'] in ['LF', 'MF', 'HF']:
+                    All_History = read_from_new_parquet(data["Sensor_Name"]+".parquet", data['Machine_Name'], int(epoch_Date_Time))
+
+            if All_History.empty:
+                return {"Response": "Data not Founda1"}, 404
+            
+            for index, row in All_History.iterrows():
+                File_Data = json.loads(row['data'])[axis_mapping[axis_Name]]
+                epoch_Date_Time = row['timestamp']
+                if 'SR' in row:
+                    if row['SR'] == 'null':
+                        SR = 10000
+                    else:
+                        SR = int(row['SR'])
+                    rpm = row['rpm']
+                    fMax = int(row['fMax'])
+                    noOfLines = int(row['noOfLines'])
+                    cutoff = int(float(row['cutoff']))
+                    floorNoiseThresholdPercentage = float(row['floorNoiseThresholdPercentage'])
+                    floorNoiseAttenuationFactor = float(row['floorNoiseAttenuationFactor'])
+
+            OfflineDataStore = list(db["OfflineDataStore"].find({ "bearingLocationId": ObjectId(data["Sensor_Name"]), "epochTime": epoch_Date_Time }))
+            if OfflineDataStore:
+                OfflineDataStore = OfflineDataStore[0]
+            else:
+                OfflineDataStore = {}
+
+            if len(File_Data) != 30000 and 'datatype' in OfflineDataStore and OfflineDataStore['datatype'] in ['24bit', '24bit-13C']:
+                if "Analytics_Types" not in data or data['Analytics_Types'] == "OM":
+                    SR_VALUE = OfflineDataStore['sr']
+                    rpm = MachineDatas['rpm']
+                    cutoff = bearingLocationDatas['velocity']['highpassCutoffFrequencyFft']
+                    fMax = None
+                    floorNoiseThresholdPercentage = 5
+                    floorNoiseAttenuationFactor = 1
+
+                else:
+                    SR_VALUE = SR
+                    rpm = rpm
+                    cutoff = cutoff
+
+                File_Data = File_Data * repeatAppend 
+                
+                if data["Type"] == 'Velocity':
+                    RespondData = velocityConvert24Demo(File_Data, SR_VALUE,  rpm, cutoff, bearingLocationDatas['velocity']['highpassOrderFft'], fmax = fMax, floorNoiseThresholdPercentage=floorNoiseThresholdPercentage, floorNoiseAttenuationFactor=floorNoiseAttenuationFactor, highResolution = repeatAppend)
+                elif data["Type"] == 'Acceleration':
+                    RespondData = accelerationConvert32Demo(File_Data, SR_VALUE, fmax = fMax)
+                elif data["Type"] == 'Acceleration Envelope':
+                    RespondData = accelerationEnvelopeConvert32Demo(File_Data, SR_VALUE, fmax = fMax)
+            elif 'datatype' in OfflineDataStore and OfflineDataStore['datatype'] == '32bit':
+                SR_VALUE = OfflineDataStore['sr']
+                if data["Type"] == 'Velocity':
+                    RespondData = velocityConvert32Demo(File_Data, SR_VALUE)
+                elif data["Type"] == 'Acceleration':
+                    RespondData = accelerationConvert32Demo(File_Data, SR_VALUE)
+                elif data["Type"] == 'Acceleration Envelope':
+                    RespondData = accelerationEnvelopeConvert32Demo(File_Data, SR_VALUE)
+            else:
+                SR_VALUE = 20000
+                if data["Type"] == 'Velocity':
+                    RespondData = velocityConvert32Demo(File_Data, SR_VALUE)
+                elif data["Type"] == 'Acceleration':
+                    RespondData = accelerationConvert32Demo(File_Data, SR_VALUE)
+                elif data["Type"] == 'Acceleration Envelope':
+                    RespondData = accelerationEnvelopeConvert32Demo(File_Data, SR_VALUE)
+            if "Analytics_Types" in data and data['Analytics_Types'] in ['LF', 'MF', 'HF']:
+                RespondData['SR'] = SR
+                RespondData['rpm'] = rpm
+                RespondData['fMax'] = fMax
+                RespondData['noOfLines'] = noOfLines
+                RespondData['cutoff'] = cutoff
+                RespondData['floorNoiseThresholdPercentage'] = floorNoiseThresholdPercentage
+                RespondData['floorNoiseAttenuationFactor'] = floorNoiseAttenuationFactor
+        else:
+            if time_difference.total_seconds() > 0:
+                if 'bearingLocationType' not in bearingLocationDatas or bearingLocationDatas['bearingLocationType'] == "ONLINE":
+                    
+                    if bearingLocationDatas['onlineOfflineFlag'] == 1:
+                        numberOfData = 1
+                    else:
+                        numberOfData = 5
+                    
+                    fullFileData = list(db["RawData"].find({ "BearingLoactionId": ObjectId(data["Sensor_Name"]), "axis": axis_mapping[data["Axis_Id"]], "epochTime": epoch_Date_Time }))
+                    SR_VALUE = fullFileData[0].get('SR', 3000)
+                    File_Data = fullFileData[0]['data']
+                    # File_Data1 = get_oldData(data["Sensor_Name"], axis_mapping[data["Axis_Id"]],epoch_Date_Time, limit = numberOfData)
+
+                    if bearingLocationDatas['onlineOfflineFlag'] == 1 or len(File_Data) < 15000:
+                        File_Data = (File_Data * (15000 // len(File_Data) + 1))[:15000]
+                    
+                    if bearingLocationDatas['velocity']['calibrationValue']['h'] != 1 or bearingLocationDatas['velocity']['calibrationValue']['v'] != 1 or bearingLocationDatas['velocity']['calibrationValue']['a'] != 1:
+                        File_Data = np.array(File_Data) * bearingLocationDatas['velocity']['calibrationValue'][axis_mapping[data["Axis_Id"]].lower()] 
+
+                    if len(File_Data) > 25000:
+                        SR_VALUE = 10000
+
+                        File_Data = File_Data * repeatAppend
+
+                        if data["Type"] == 'Velocity':
+                            RespondData = velocityConvert24Demo(File_Data, SR_VALUE,  MachineDatas['rpm'], bearingLocationDatas['velocity']['highpassCutoffFrequencyFft'], bearingLocationDatas['velocity']['highpassOrderFft'])
+                        elif data["Type"] == 'Acceleration':
+                            RespondData = accelerationConvert32Demo(File_Data, SR_VALUE)
+                        elif data["Type"] == 'Acceleration Envelope':
+                            RespondData = accelerationEnvelopeConvert32Demo(File_Data, SR_VALUE)
+                    else:
+                        
+                        File_Data = File_Data * repeatAppend
+                        if data["Type"] == 'Velocity':
+                            if SR_VALUE == 3000:
+                                RespondData = velocityConvertDemo1(File_Data, SR_VALUE, (bearingLocationDatas['velocity']['highpassCutoffFrequencyFft'],bearingLocationDatas['velocity']['highpassOrderFft']), lowpass_values, fmax = fmax)
+                            else:
+                                RespondData = velocityConvertHighResolution(File_Data, SR_VALUE, fullFileData[0]['NOS'], (bearingLocationDatas['velocity']['highpassCutoffFrequencyFft'],bearingLocationDatas['velocity']['highpassOrderFft']), lowpass_values, fmax = fmax)
+                        elif data["Type"] == 'Acceleration':
+                            if SR_VALUE == 3000:
+                                RespondData = accelerationConvertDemo(File_Data, SR_VALUE, (bearingLocationDatas['acceleration']['highpassCutoffFrequencyFft'],bearingLocationDatas['acceleration']['highpassOrderFft']), fmax = fmax)
+                            else:
+                                RespondData = accelerationConvertHighResolution(File_Data, SR_VALUE, fullFileData[0]['NOS'], (bearingLocationDatas['velocity']['highpassCutoffFrequencyFft'],bearingLocationDatas['velocity']['highpassOrderFft']), lowpass_values, fmax = fmax)
+                        elif data["Type"] == 'Acceleration Envelope':
+                            RespondData = accelerationEnvelopeConvertDemo(File_Data, SR_VALUE, (bearingLocationDatas['accelerationEnvelope']['highpassCutoffFrequencyFft'],bearingLocationDatas['accelerationEnvelope']['highpassOrderFft']))
+
+            else:
+                if bearingLocationDatas['onlineOfflineFlag'] == 1:
+                    numberOfData = 1
+                else:
+                    numberOfData = 4
+
+                if check_file_exists(data["Sensor_Name"]+".parquet"):
+                    if latest:
+                        start_date_Time = int((datetime.now().astimezone(settings.GMT_TIMEZONE) + timedelta(days=-int(365))).timestamp())
+                        All_History = read_from_parquet(data["Sensor_Name"]+".parquet", start_date_Time, end_date_Time, limit = numberOfData)
+                        for index, row in All_History.iterrows():
+                            axis_Name = str(list(json.loads(row['data']).keys())[0]) + "-Axis"
+
+                    else:
+                        start_date_Time = int((datetime.fromtimestamp(int(epoch_Date_Time)) + timedelta(days=-int(365))).timestamp())
+                        All_History = read_from_parquet(data["Sensor_Name"]+".parquet", start_date_Time, int(epoch_Date_Time), limit = numberOfData, axis = axis_mapping[data["Axis_Id"]])
+            
+                    if All_History.empty:
+                        return {"Response": "Data not Found"}, 404
+                    
+                    if 'bearingLocationType' not in bearingLocationDatas or bearingLocationDatas['bearingLocationType'] == "ONLINE":
+                        for index, row in All_History.iterrows():
+                            File_Data = json.loads(row["data"])
+                            epoch_Date_Time = row['timestamp']
+                            if data["Axis_Id"] == "H-Axis" and row["axis"] == "H":
+                                File_Data = json.loads(row["data"])
+                            elif data["Axis_Id"] == "V-Axis" and row["axis"] == "V":
+                                File_Data = json.loads(row["data"])
+                            if data["Axis_Id"] == "A-Axis" and row["axis"] == "A":
+                                File_Data = json.loads(row["data"])
+                                
+                        if len(All_History) > 1:
+                            File_Data = append_parquet_data(All_History)
+
+                        if bearingLocationDatas['onlineOfflineFlag'] == 1 or len(File_Data) < 15000:
+                            File_Data = (File_Data * (15000 // len(File_Data) + 1))[:15000]
+
+                        if bearingLocationDatas['velocity']['calibrationValue']['h'] != 1 or bearingLocationDatas['velocity']['calibrationValue']['v'] != 1 or bearingLocationDatas['velocity']['calibrationValue']['a'] != 1:
+                            File_Data = np.array(File_Data) * bearingLocationDatas['velocity']['calibrationValue'][axis_mapping[data["Axis_Id"]].lower()] 
+
+                        if len(File_Data) > 25000:
+                            
+                            File_Data = File_Data * repeatAppend
+                            SR_VALUE = 10000
+                            if data["Type"] == 'Velocity':
+                                RespondData = velocityConvert24Demo(File_Data, SR_VALUE,  MachineDatas['rpm'], bearingLocationDatas['velocity']['highpassCutoffFrequencyFft'], bearingLocationDatas['velocity']['highpassOrderFft'])
+                            elif data["Type"] == 'Acceleration':
+                                RespondData = accelerationConvert32Demo(File_Data, SR_VALUE)
+                            elif data["Type"] == 'Acceleration Envelope':
+                                RespondData = accelerationEnvelopeConvert32Demo(File_Data, SR_VALUE)
+                        else:
+                            File_Data = File_Data * repeatAppend
+                            SR_VALUE = 3000
+                            if data["Type"] == 'Velocity':
+                                if SR_VALUE == 3000:
+                                    RespondData = velocityConvertDemo1(File_Data, SR_VALUE, (bearingLocationDatas['velocity']['highpassCutoffFrequencyFft'],bearingLocationDatas['velocity']['highpassOrderFft']), lowpass_values, fmax = fmax)
+                                else:
+                                    RespondData = velocityConvertHighResolution(File_Data, SR_VALUE, fullFileData[0]['NOS'], (bearingLocationDatas['velocity']['highpassCutoffFrequencyFft'],bearingLocationDatas['velocity']['highpassOrderFft']), lowpass_values, fmax = fmax)
+
+                                    # RespondData = velocityConvertDemo1(File_Data, SR_VALUE, (bearingLocationDatas['velocity']['highpassCutoffFrequencyFft'],bearingLocationDatas['velocity']['highpassOrderFft']), lowpass_values)
+                            elif data["Type"] == 'Acceleration':
+                                if SR_VALUE == 3000:
+                                    RespondData = accelerationConvertDemo(File_Data, SR_VALUE, (bearingLocationDatas['acceleration']['highpassCutoffFrequencyFft'],bearingLocationDatas['acceleration']['highpassOrderFft']), fmax = fmax)
+                                else:
+                                    RespondData = accelerationConvertHighResolution(File_Data, SR_VALUE, fullFileData[0]['NOS'], (bearingLocationDatas['velocity']['highpassCutoffFrequencyFft'],bearingLocationDatas['velocity']['highpassOrderFft']), lowpass_values, fmax = fmax)
+
+                                    # RespondData = accelerationConvertDemo(File_Data, SR_VALUE, (bearingLocationDatas['acceleration']['highpassCutoffFrequencyFft'],bearingLocationDatas['acceleration']['highpassOrderFft']))
+                            elif data["Type"] == 'Acceleration Envelope':
+                                RespondData = accelerationEnvelopeConvertDemo(File_Data, SR_VALUE, (bearingLocationDatas['accelerationEnvelope']['highpassCutoffFrequencyFft'],bearingLocationDatas['accelerationEnvelope']['highpassOrderFft']))
+
+        keys_to_remove = ['Timeseries', 'twf_max', 'twf_min']
+        for key in keys_to_remove:
+            RespondData.pop(key, None)
+
+        if "date_Time" not in data:
+            RespondData["epochTime"] = epoch_Date_Time
+
+        return RespondData, 200
+    except Exception as e:
+        print(traceback.print_exc())
+        print(e)
+        return {"Response": "Data not Found"}, 500
+
+@csrf_exempt
 def delete_temp(request):
     if request.method == 'POST':
         try:
