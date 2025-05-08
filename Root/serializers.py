@@ -64,6 +64,7 @@ class SensorSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class BearingLocationSerializer(serializers.ModelSerializer):
+    print("Start")
     id = serializers.SerializerMethodField()
 
     class Meta:
@@ -93,7 +94,7 @@ class BearingLocationSerializer(serializers.ModelSerializer):
         for key, value in representation.items():
             if isinstance(value, dict) and '_id' in value and '$oid' in value['_id']:
                 representation[key]['_id'] = value['_id']['$oid']
-
+        
         return representation
 
 class MachineSerializer(serializers.ModelSerializer):

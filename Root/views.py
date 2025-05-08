@@ -268,6 +268,7 @@ class MachineViewSet(viewsets.ModelViewSet):
 class BearingLocationViewSet(viewsets.ModelViewSet):
     id = ObjectIdField(read_only=True)
     queryset = BearingLocation.objects.all()
+    
     serializer_class = BearingLocationSerializer
     
 class UserViewSet(viewsets.ModelViewSet):
