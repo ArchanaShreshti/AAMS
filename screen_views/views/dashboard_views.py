@@ -431,3 +431,121 @@ class MachineHealthView(APIView):
             return Response({'message': 'No machine health data available.'}, status=status.HTTP_204_NO_CONTENT)
 
         return Response(machine_health_data, status=status.HTTP_200_OK)
+    
+class MachineDetailView(View):
+    def get(self, request, machine_id):
+        # Validate machine_id
+        if not ObjectId.is_valid(machine_id):
+            return JsonResponse({"error": "Invalid machine_id"}, status=400)
+
+        try:
+            machine = Machine.objects.get(id=ObjectId(machine_id))
+        except Machine.DoesNotExist:
+            return JsonResponse({"error": "Machine not found"}, status=404)
+
+        # Build the response
+        data = {
+            "id": str(machine.id),
+            "name": machine.name,
+            "tagNumber": machine.tagNumber,
+            "description": machine.description,
+            "machineType": machine.machineType,
+            "rpm": machine.rpm,
+            "location": machine.location,  # Assuming dict with `coordinates`
+            "contactNumber": machine.contactNumber or [],
+            "email": machine.email or [],
+            "qrCode": machine.qrCode,
+            "image": machine.image,
+            "preventiveCheckList": machine.preventiveCheckList or [],
+            "preventiveCheckData": machine.preventiveCheckData or [],
+            "observations": machine.observations,
+            "recommendations": machine.recommendations,
+            "dataUpdatedTime": machine.dataUpdatedTime,
+            "createdAt": machine.createdAt,
+            "updatedAt": machine.updatedAt,
+        }
+
+        # Related fields
+        data["customerId"] = self.serialize_related(machine.customerId)
+        data["areaId"] = self.serialize_related(machine.areaId)
+        data["subAreaId"] = self.serialize_related(machine.subAreaId)
+        data["statusId"] = self.serialize_related(machine.statusId)
+        data["technologyId"] = self.serialize_related(machine.technologyId)
+        data["alertLimitsId"] = self.serialize_related(machine.alertLimitsId)
+
+        return JsonResponse(data, safe=False)
+
+    def serialize_related(self, obj):
+        if not obj:
+            return None
+        return {
+            "id": str(obj.id),
+            "name": getattr(obj, "name", None),
+            "description": getattr(obj, "description", ""),
+            "key": getattr(obj, "key", None),
+            "badgeClass": getattr(obj, "badgeClass", None),
+            "color": getattr(obj, "color", None),
+            "severity": getattr(obj, "severity", None),
+            "type": getattr(obj, "type", None),
+            "normal": getattr(obj, "normal", None),
+            "satisfactory": getattr(obj, "satisfactory", None),
+            "alert": getattr(obj, "alert", None),
+            "unacceptable": getattr(obj, "unacceptable", None),
+            "createdAt": getattr(obj, "createdAt", None),
+            "updatedAt": getattr(obj, "updatedAt", None),
+            "customerId": str(getattr(obj, "customerId", "")) if hasattr(obj, "customerId") else None,
+        }
+    
+class CustomBearingLocationView(View):
+    def get(self, request, bearing_location_id):
+        # Debug: Log the received bearing_location_id
+        print(f"Received bearing_location_id: {bearing_location_id}")
+
+        if not ObjectId.is_valid(bearing_location_id):
+            return JsonResponse({"error": "Invalid bearing location ID"}, status=400)
+
+        try:
+            bearing_location = BearingLocation.objects.get(id=ObjectId(bearing_location_id))
+        except BearingLocation.DoesNotExist:
+            return JsonResponse({"error": "Bearing location not found"}, status=404)
+
+        data = {
+            "id": str(bearing_location.id),
+            "name": bearing_location.name,
+            "bearingLocationType": bearing_location.bearingLocationType,
+            "velocity": bearing_location.velocity,
+            "acceleration": bearing_location.acceleration,
+            "accelerationEnvelope": bearing_location.accelerationEnvelope,
+            "orientation": bearing_location.orientation,
+            "dataFetchingInterval": bearing_location.dataFetchingInterval,
+            "rawDataSavingInterval": bearing_location.rawDataSavingInterval,
+            "dataStoreFlag": bearing_location.dataStoreFlag,
+            "averagingFlag": bearing_location.averagingFlag,
+            "fSpanMin": bearing_location.fSpanMin,
+            "fSpanMax": bearing_location.fSpanMax,
+            "lowFrequencyFmax": bearing_location.lowFrequencyFmax,
+            "lowFrequencyNoOflines": bearing_location.lowFrequencyNoOflines,
+            "mediumFrequencyFmax": bearing_location.mediumFrequencyFmax,
+            "mediumFrequencyNoOflines": bearing_location.mediumFrequencyNoOflines,
+            "highFrequencyFmax": bearing_location.highFrequencyFmax,
+            "highFrequencyNoOflines": bearing_location.highFrequencyNoOflines,
+            "created_at": bearing_location.created_at,
+            "updated_at": bearing_location.updated_at,
+        }
+
+        # Serialize related fields
+        data["machineId"] = self.serialize_related(bearing_location.machineId)
+        data["bearingId"] = self.serialize_related(bearing_location.bearingId)
+        data["statusId"] = self.serialize_related(bearing_location.statusId)
+
+        return JsonResponse(data, safe=False)
+
+    def serialize_related(self, obj):
+        if not obj:
+            return None
+        return {
+            "id": str(obj.id),
+            "name": getattr(obj, "name", ""),
+            "key": getattr(obj, "key", ""),
+            "description": getattr(obj, "description", ""),
+        }

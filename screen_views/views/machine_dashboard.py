@@ -6,6 +6,8 @@ from screen_views.utils import *
 import json
 import base64
 from django.views.decorators.http import require_http_methods
+from django.views.decorators.csrf import csrf_exempt
+from datetime import datetime, timedelta, timezone
 
 # Access settings
 audio_directory = settings.AUDIO_DIRECTORY
@@ -232,6 +234,7 @@ def my_view(request):
     appended_data = append_parquet_data(df)
     return JsonResponse({'data': appended_data})
 
+@csrf_exempt
 @require_http_methods(['POST'])
 def start_audio(request):
     try:
@@ -313,6 +316,7 @@ def start_audio(request):
         print(traceback.print_exc())
         return JsonResponse({"Response": "Data not Found"}, status=500)
 
+@csrf_exempt
 @require_http_methods(['POST'])
 def start_timeseries(request):
     try:
@@ -501,9 +505,6 @@ def start_timeseries(request):
         print(e)
         print(traceback.print_exc())
         return JsonResponse({"Response": "Data not Found"}, status=500)
-
-from django.views.decorators.csrf import csrf_exempt
-from datetime import datetime, timedelta, timezone
 
 @csrf_exempt
 @require_http_methods(["POST"])
@@ -768,6 +769,7 @@ def fft_view(request):
         return JsonResponse({"error": str(e)}, status=500)
 
 @csrf_exempt
+@require_http_methods(["POST"])
 def start_parameter_trends(request):
     if request.method == "POST":
         try:
@@ -869,54 +871,53 @@ def start_parameter_trends(request):
             return JsonResponse({"Response": "Data not Found"}, status=500)
         
 @csrf_exempt
-
+@require_http_methods(["POST"])
 def start32BitRealTimefft(request):
     data = request.data
     print("RealTimefft : ", data)
-    if request.method == "POST":
-        try:
-            # Use settings.GMT_TIMEZONE for timezone calculation
-            start_date_time = int((datetime.now().astimezone(settings.GMT_TIMEZONE) + timedelta(days=-60)).timestamp())
-            end_date_time = int((datetime.now().astimezone(settings.GMT_TIMEZONE)).timestamp())
-            
-            # Read the data from the Parquet file
-            All_History = read_from_parquet(data["Sensor_Name"] + ".parquet", start_date_time, end_date_time, 1)
+    try:
+        # Use settings.GMT_TIMEZONE for timezone calculation
+        start_date_time = int((datetime.now().astimezone(settings.GMT_TIMEZONE) + timedelta(days=-60)).timestamp())
+        end_date_time = int((datetime.now().astimezone(settings.GMT_TIMEZONE)).timestamp())
+        
+        # Read the data from the Parquet file
+        All_History = read_from_parquet(data["Sensor_Name"] + ".parquet", start_date_time, end_date_time, 1)
 
-            # Extract data for the corresponding axis (H, V, A)
-            File_Data = None
-            for index, row in All_History.iterrows():
-                axis_data = json.loads(row['data'])
-                axis_key = next(iter(axis_data.keys()))
-                if axis_key == "H":
-                    File_Data = axis_data["H"]
-                elif axis_key == "V":
-                    File_Data = axis_data["V"]
-                elif axis_key == "A":
-                    File_Data = axis_data["A"]
-            
-            if not File_Data:
-                return JsonResponse({"Response": "No valid data found for the specified sensor"}, status=404)
+        # Extract data for the corresponding axis (H, V, A)
+        File_Data = None
+        for index, row in All_History.iterrows():
+            axis_data = json.loads(row['data'])
+            axis_key = next(iter(axis_data.keys()))
+            if axis_key == "H":
+                File_Data = axis_data["H"]
+            elif axis_key == "V":
+                File_Data = axis_data["V"]
+            elif axis_key == "A":
+                File_Data = axis_data["A"]
+        
+        if not File_Data:
+            return JsonResponse({"Response": "No valid data found for the specified sensor"}, status=404)
 
-            SR_VALUE = 20000
-            # Perform the required conversion based on the Type field
-            if data["Type"] == 'Velocity':
-                RespondData = velocityConvert32Demo(File_Data, SR_VALUE)
-            elif data["Type"] == 'Acceleration':
-                RespondData = accelerationConvert32Demo(File_Data, SR_VALUE)
-            elif data["Type"] == 'Accelerationenvelope':
-                RespondData = accelerationEnvelopeConvert32Demo(File_Data, SR_VALUE)
+        SR_VALUE = 20000
+        # Perform the required conversion based on the Type field
+        if data["Type"] == 'Velocity':
+            RespondData = velocityConvert32Demo(File_Data, SR_VALUE)
+        elif data["Type"] == 'Acceleration':
+            RespondData = accelerationConvert32Demo(File_Data, SR_VALUE)
+        elif data["Type"] == 'Accelerationenvelope':
+            RespondData = accelerationEnvelopeConvert32Demo(File_Data, SR_VALUE)
 
-            # Remove unnecessary keys from the result
-            keys_to_remove = ['Timeseries', 'twf_max', 'twf_min']
-            for key in keys_to_remove:
-                RespondData.pop(key, None)
+        # Remove unnecessary keys from the result
+        keys_to_remove = ['Timeseries', 'twf_max', 'twf_min']
+        for key in keys_to_remove:
+            RespondData.pop(key, None)
 
-            return JsonResponse(RespondData, status=200)
+        return JsonResponse(RespondData, status=200)
 
-        except Exception as e:
-            print(traceback.print_exc())
-            print(e)
-            return JsonResponse({"Response": "Data not Found"}, status=500)
+    except Exception as e:
+        print(traceback.print_exc())
+        print(e)
+        return JsonResponse({"Response": "Data not Found"}, status=500)
         
 @csrf_exempt
 def start32BitRealTimeValue(request):
@@ -1003,85 +1004,83 @@ def start32BitRealTimeValue(request):
 
 @csrf_exempt
 def realtime_value_v3(request):
-    if request.method != 'POST':
-        return JsonResponse({'error': 'Only POST method allowed'}, status=405)
+    if request.method == 'POST':
+        try:
+            data = json.loads(request.body)
+            print("RealTimeValue v3:", data)
 
-    try:
-        data = json.loads(request.body)
-        print("RealTimeValue v3:", data)
+            machine_id = data.get("Machine_Name")
+            sensor_type = data.get("Type")
 
-        machine_id = data.get("Machine_Name")
-        sensor_type = data.get("Type")
+            if not machine_id or not sensor_type:
+                return JsonResponse({"error": "Machine_Name and Type are required."}, status=400)
 
-        if not machine_id or not sensor_type:
-            return JsonResponse({"error": "Machine_Name and Type are required."}, status=400)
+            client = MongoClient()
+            db = client[settings.MONGODB_NAME]
 
-        client = MongoClient()
-        db = client[settings.MONGODB_NAME]
+            bearing_locations = db["BearingLocation"].find({"machineId": ObjectId(machine_id)})
+            iso_dict = isoStandardGetter(ObjectId(machine_id))
+            final_data = {"data": {}}
 
-        bearing_locations = db["BearingLocation"].find({"machineId": ObjectId(machine_id)})
-        iso_dict = isoStandardGetter(ObjectId(machine_id))
-        final_data = {"data": {}}
+            for bl in bearing_locations:
+                location_type = bl.get('bearingLocationType', 'ONLINE')
+                file_name = f"RMS_{bl['_id']}.parquet"
+                H, V, A = {}, {}, {}
+                DATETIME = None
 
-        for bl in bearing_locations:
-            location_type = bl.get('bearingLocationType', 'ONLINE')
-            file_name = f"RMS_{bl['_id']}.parquet"
-            H, V, A = {}, {}, {}
-            DATETIME = None
+                start_ts = int((datetime.now().astimezone(settings.GMT_TIMEZONE) - timedelta(days=1)).timestamp())
+                end_ts = int(datetime.now().astimezone(settings.GMT_TIMEZONE).timestamp())
+                rows_to_fetch = 1 if location_type == "ONLINE" else 10
 
-            start_ts = int((datetime.now().astimezone(settings.GMT_TIMEZONE) - timedelta(days=1)).timestamp())
-            end_ts = int(datetime.now().astimezone(settings.GMT_TIMEZONE).timestamp())
-            rows_to_fetch = 1 if location_type == "ONLINE" else 10
+                try:
+                    df = read_from_parquet(file_name, start_ts, end_ts, rows_to_fetch)
+                    if df.empty:
+                        continue
 
-            try:
-                df = read_from_parquet(file_name, start_ts, end_ts, rows_to_fetch)
-                if df.empty:
+                    for _, row in df.iterrows():
+                        DATETIME = row['timestamp']
+
+                        if location_type == "ONLINE":
+                            H_val = json.loads(row['H'])[sensor_type]
+                            V_val = json.loads(row['V'])[sensor_type]
+                            A_val = json.loads(row['A'])[sensor_type]
+                            H = {"value": H_val, "status": isoAlertGetter(iso_dict, H_val)}
+                            V = {"value": V_val, "status": isoAlertGetter(iso_dict, V_val)}
+                            A = {"value": A_val, "status": isoAlertGetter(iso_dict, A_val)}
+                        else:  # OFFLINE
+                            data_json = json.loads(row['data'])
+                            if "H" in data_json:
+                                val = data_json["H"][sensor_type]
+                                H = {"value": val, "status": isoAlertGetter(iso_dict, val)}
+                            elif "V" in data_json:
+                                val = data_json["V"][sensor_type]
+                                V = {"value": val, "status": isoAlertGetter(iso_dict, val)}
+                            elif "A" in data_json:
+                                val = data_json["A"][sensor_type]
+                                A = {"value": val, "status": isoAlertGetter(iso_dict, val)}
+
+                    if DATETIME:
+                        DATETIME = DATETIME // 1000 if DATETIME > 10**10 else DATETIME
+                        final_data["data"][bl["name"]] = {
+                            "H": H if H else {"value": 0, "status": "normal"},
+                            "V": V if V else {"value": 0, "status": "normal"},
+                            "A": A if A else {"value": 0, "status": "normal"},
+                            "sensorName": bl["name"],
+                            "Time": datetime.utcfromtimestamp(int(DATETIME)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
+                            "bearingLocationType": location_type
+                        }
+
+                except FileNotFoundError:
+                    continue
+                except Exception:
+                    print(traceback.format_exc())
                     continue
 
-                for _, row in df.iterrows():
-                    DATETIME = row['timestamp']
+            return JsonResponse(list(final_data["data"].values()), safe=False, status=200)
 
-                    if location_type == "ONLINE":
-                        H_val = json.loads(row['H'])[sensor_type]
-                        V_val = json.loads(row['V'])[sensor_type]
-                        A_val = json.loads(row['A'])[sensor_type]
-                        H = {"value": H_val, "status": isoAlertGetter(iso_dict, H_val)}
-                        V = {"value": V_val, "status": isoAlertGetter(iso_dict, V_val)}
-                        A = {"value": A_val, "status": isoAlertGetter(iso_dict, A_val)}
-                    else:  # OFFLINE
-                        data_json = json.loads(row['data'])
-                        if "H" in data_json:
-                            val = data_json["H"][sensor_type]
-                            H = {"value": val, "status": isoAlertGetter(iso_dict, val)}
-                        elif "V" in data_json:
-                            val = data_json["V"][sensor_type]
-                            V = {"value": val, "status": isoAlertGetter(iso_dict, val)}
-                        elif "A" in data_json:
-                            val = data_json["A"][sensor_type]
-                            A = {"value": val, "status": isoAlertGetter(iso_dict, val)}
-
-                if DATETIME:
-                    DATETIME = DATETIME // 1000 if DATETIME > 10**10 else DATETIME
-                    final_data["data"][bl["name"]] = {
-                        "H": H if H else {"value": 0, "status": "normal"},
-                        "V": V if V else {"value": 0, "status": "normal"},
-                        "A": A if A else {"value": 0, "status": "normal"},
-                        "sensorName": bl["name"],
-                        "Time": datetime.utcfromtimestamp(int(DATETIME)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
-                        "bearingLocationType": location_type
-                    }
-
-            except FileNotFoundError:
-                continue
-            except Exception:
-                print(traceback.format_exc())
-                continue
-
-        return JsonResponse(list(final_data["data"].values()), safe=False, status=200)
-
-    except Exception:
-        print(traceback.format_exc())
-        return JsonResponse({"Response": "Data not Found"}, status=500)
+        except Exception:
+            print(traceback.format_exc())
+            return JsonResponse({"Response": "Data not Found"}, status=500)
     
 from pymongo import DESCENDING
 
@@ -1308,183 +1307,179 @@ def start_hopnet_audio(request):
     
 @csrf_exempt
 def start_hopnet_timeseries(request):
-    if request.method != 'POST':
-        return JsonResponse({"error": "Only POST method allowed"}, status=405)
+    if request.method == 'POST':
+        try:
+            data = json.loads(request.body)
+            db = client[settings.MONGODB_NAME]
+            start_date_time = datetime.now(timezone.utc) - timedelta(days=1)
+            data_date_time = datetime.utcfromtimestamp(int(str(data["date_time"]))).replace(tzinfo=timezone.utc)
+            time_difference = data_date_time - start_date_time
 
-    try:
-        data = json.loads(request.body)
-        db = client[settings.MONGODB_NAME]
-        start_date_time = datetime.now(timezone.utc) - timedelta(days=1)
-        data_date_time = datetime.utcfromtimestamp(int(str(data["date_time"]))).replace(tzinfo=timezone.utc)
-        time_difference = data_date_time - start_date_time
+            bearingLocationDatas = db["BearingLocation"].find_one({"_id": ObjectId(data["sensor_id"])})
+            File_Data = []
 
-        bearingLocationDatas = db["BearingLocation"].find_one({"_id": ObjectId(data["sensor_id"])})
-        File_Data = []
+            if time_difference.total_seconds() > 0:
+                if 'bearingLocationType' not in bearingLocationDatas or bearingLocationDatas['bearingLocationType'] == "ONLINE":
+                    axis = data["axis_name"].upper()
+                    raw = db["RawData"].find_one({
+                        "BearingLoactionId": ObjectId(data["sensor_id"]),
+                        "axis": axis,
+                        "epochTime": data["date_time"]
+                    })
 
-        if time_difference.total_seconds() > 0:
-            if 'bearingLocationType' not in bearingLocationDatas or bearingLocationDatas['bearingLocationType'] == "ONLINE":
-                axis = data["axis_name"].upper()
-                raw = db["RawData"].find_one({
-                    "BearingLoactionId": ObjectId(data["sensor_id"]),
-                    "axis": axis,
-                    "epochTime": data["date_time"]
-                })
+                    File_Data = raw['data'] if raw else []
+                    SR_VALUE = 3000
+                    if data["unit_name"] == 'Velocity':
+                        RespondData = velocityConvertDemo(File_Data, SR_VALUE, (
+                            bearingLocationDatas['velocity']['highpassCutoffFrequencyFft'],
+                            bearingLocationDatas['velocity']['highpassOrderFft']))
+                    elif data["unit_name"] == 'Acceleration':
+                        RespondData = accelerationConvertDemo(File_Data, SR_VALUE, (
+                            bearingLocationDatas['acceleration']['highpassCutoffFrequencyFft'],
+                            bearingLocationDatas['acceleration']['highpassOrderFft']))
+                    elif data["unit_name"] == 'Acceleration Envelope':
+                        RespondData = accelerationEnvelopeConvertDemo(File_Data, SR_VALUE, (
+                            bearingLocationDatas['accelerationEnvelope']['highpassCutoffFrequencyFft'],
+                            bearingLocationDatas['accelerationEnvelope']['highpassOrderFft']))
 
-                File_Data = raw['data'] if raw else []
-                SR_VALUE = 3000
-                if data["unit_name"] == 'Velocity':
-                    RespondData = velocityConvertDemo(File_Data, SR_VALUE, (
-                        bearingLocationDatas['velocity']['highpassCutoffFrequencyFft'],
-                        bearingLocationDatas['velocity']['highpassOrderFft']))
-                elif data["unit_name"] == 'Acceleration':
-                    RespondData = accelerationConvertDemo(File_Data, SR_VALUE, (
-                        bearingLocationDatas['acceleration']['highpassCutoffFrequencyFft'],
-                        bearingLocationDatas['acceleration']['highpassOrderFft']))
-                elif data["unit_name"] == 'Acceleration Envelope':
-                    RespondData = accelerationEnvelopeConvertDemo(File_Data, SR_VALUE, (
-                        bearingLocationDatas['accelerationEnvelope']['highpassCutoffFrequencyFft'],
-                        bearingLocationDatas['accelerationEnvelope']['highpassOrderFft']))
+                else:  # OFFLINE
+                    All_History = read_from_parquet(data["sensor_id"] + ".parquet", int(data["date_time"]))
+                    if All_History.empty:
+                        return return_data_not_found()
 
-            else:  # OFFLINE
+                    for _, row in All_History.iterrows():
+                        File_Data = json.loads(row['data'])[data["axis_name"].upper()]
+                    SR_VALUE = 20000
+
+                    if data["unit_name"] == 'Velocity':
+                        RespondData = velocityConvert24Demo(File_Data, SR_VALUE)
+                    elif data["unit_name"] == 'Acceleration':
+                        RespondData = accelerationConvert32Demo(File_Data, SR_VALUE)
+                    elif data["unit_name"] == 'Acceleration Envelope':
+                        RespondData = accelerationEnvelopeConvert32Demo(File_Data, SR_VALUE)
+
+            else:
+                if not check_file_exists(data["sensor_id"] + ".parquet"):
+                    return return_data_not_found()
+
                 All_History = read_from_parquet(data["sensor_id"] + ".parquet", int(data["date_time"]))
                 if All_History.empty:
                     return return_data_not_found()
 
-                for _, row in All_History.iterrows():
-                    File_Data = json.loads(row['data'])[data["axis_name"].upper()]
-                SR_VALUE = 20000
+                if 'bearingLocationType' not in bearingLocationDatas or bearingLocationDatas['bearingLocationType'] == "ONLINE":
+                    for _, row in All_History.iterrows():
+                        if data["axis_name"].upper() == row["axis"]:
+                            File_Data = json.loads(row["data"])
+                    SR_VALUE = 3000
+                    if data["unit_name"] == 'Velocity':
+                        RespondData = velocityConvertDemo(File_Data, SR_VALUE, (
+                            bearingLocationDatas['velocity']['highpassCutoffFrequencyFft'],
+                            bearingLocationDatas['velocity']['highpassOrderFft']))
+                    elif data["unit_name"] == 'Acceleration':
+                        RespondData = accelerationConvertDemo(File_Data, SR_VALUE, (
+                            bearingLocationDatas['acceleration']['highpassCutoffFrequencyFft'],
+                            bearingLocationDatas['acceleration']['highpassOrderFft']))
+                    elif data["unit_name"] == 'Acceleration Envelope':
+                        RespondData = accelerationEnvelopeConvertDemo(File_Data, SR_VALUE, (
+                            bearingLocationDatas['accelerationEnvelope']['highpassCutoffFrequencyFft'],
+                            bearingLocationDatas['accelerationEnvelope']['highpassOrderFft']))
+                else:  # OFFLINE
+                    for _, row in All_History.iterrows():
+                        File_Data = json.loads(row['data'])[data["axis_name"].upper()]
+                    SR_VALUE = 20000
+                    if data["unit_name"] == 'Velocity':
+                        RespondData = velocityConvert32Demo(File_Data, SR_VALUE)
+                    elif data["unit_name"] == 'Acceleration':
+                        RespondData = accelerationConvert32Demo(File_Data, SR_VALUE)
+                    elif data["unit_name"] == 'Acceleration Envelope':
+                        RespondData = accelerationEnvelopeConvert32Demo(File_Data, SR_VALUE)
 
-                if data["unit_name"] == 'Velocity':
-                    RespondData = velocityConvert24Demo(File_Data, SR_VALUE)
-                elif data["unit_name"] == 'Acceleration':
-                    RespondData = accelerationConvert32Demo(File_Data, SR_VALUE)
-                elif data["unit_name"] == 'Acceleration Envelope':
-                    RespondData = accelerationEnvelopeConvert32Demo(File_Data, SR_VALUE)
+            for key in ['FFT', 'fft_max', 'fft_min']:
+                RespondData.pop(key, None)
 
-        else:
-            if not check_file_exists(data["sensor_id"] + ".parquet"):
-                return return_data_not_found()
+            return return_data_found({"twf": RespondData})
 
-            All_History = read_from_parquet(data["sensor_id"] + ".parquet", int(data["date_time"]))
-            if All_History.empty:
-                return return_data_not_found()
-
-            if 'bearingLocationType' not in bearingLocationDatas or bearingLocationDatas['bearingLocationType'] == "ONLINE":
-                for _, row in All_History.iterrows():
-                    if data["axis_name"].upper() == row["axis"]:
-                        File_Data = json.loads(row["data"])
-                SR_VALUE = 3000
-                if data["unit_name"] == 'Velocity':
-                    RespondData = velocityConvertDemo(File_Data, SR_VALUE, (
-                        bearingLocationDatas['velocity']['highpassCutoffFrequencyFft'],
-                        bearingLocationDatas['velocity']['highpassOrderFft']))
-                elif data["unit_name"] == 'Acceleration':
-                    RespondData = accelerationConvertDemo(File_Data, SR_VALUE, (
-                        bearingLocationDatas['acceleration']['highpassCutoffFrequencyFft'],
-                        bearingLocationDatas['acceleration']['highpassOrderFft']))
-                elif data["unit_name"] == 'Acceleration Envelope':
-                    RespondData = accelerationEnvelopeConvertDemo(File_Data, SR_VALUE, (
-                        bearingLocationDatas['accelerationEnvelope']['highpassCutoffFrequencyFft'],
-                        bearingLocationDatas['accelerationEnvelope']['highpassOrderFft']))
-            else:  # OFFLINE
-                for _, row in All_History.iterrows():
-                    File_Data = json.loads(row['data'])[data["axis_name"].upper()]
-                SR_VALUE = 20000
-                if data["unit_name"] == 'Velocity':
-                    RespondData = velocityConvert32Demo(File_Data, SR_VALUE)
-                elif data["unit_name"] == 'Acceleration':
-                    RespondData = accelerationConvert32Demo(File_Data, SR_VALUE)
-                elif data["unit_name"] == 'Acceleration Envelope':
-                    RespondData = accelerationEnvelopeConvert32Demo(File_Data, SR_VALUE)
-
-        for key in ['FFT', 'fft_max', 'fft_min']:
-            RespondData.pop(key, None)
-
-        return return_data_found({"twf": RespondData})
-
-    except Exception as e:
-        print(traceback.format_exc())
-        return return_internal_server_error(str(e))
+        except Exception as e:
+            print(traceback.format_exc())
+            return return_internal_server_error(str(e))
     
 @csrf_exempt
 def start_hopnet_fft(request):
-    if request.method != 'POST':
-        return JsonResponse({'error': 'Only POST method allowed'}, status=405)
+    if request.method == 'POST':
+        try:
+            data = json.loads(request.body)
+            print("fft:", data)
 
-    try:
-        data = json.loads(request.body)
-        print("fft:", data)
+            start_date_time = datetime.now(timezone.utc) - timedelta(days=1)
+            data_date_time = datetime.utcfromtimestamp(int(str(data["date_time"]))).replace(tzinfo=timezone.utc)
+            time_difference = data_date_time - start_date_time
 
-        start_date_time = datetime.now(timezone.utc) - timedelta(days=1)
-        data_date_time = datetime.utcfromtimestamp(int(str(data["date_time"]))).replace(tzinfo=timezone.utc)
-        time_difference = data_date_time - start_date_time
+            bearingLocationDatas = db["BearingLocation"].find_one({"_id": ObjectId(data["sensor_id"])})
+            axis = data["axis_name"].upper()
+            RespondData = {}
 
-        bearingLocationDatas = db["BearingLocation"].find_one({"_id": ObjectId(data["sensor_id"])})
-        axis = data["axis_name"].upper()
-        RespondData = {}
+            def convert_unit(unit_name, file_data, sr, cutoff_data=None):
+                if unit_name == 'Velocity':
+                    return velocityConvertDemo(file_data, sr, cutoff_data) if cutoff_data else velocityConvert32Demo(file_data, sr)
+                elif unit_name == 'Acceleration':
+                    return accelerationConvertDemo(file_data, sr, cutoff_data) if cutoff_data else accelerationConvert32Demo(file_data, sr)
+                elif unit_name == 'Acceleration Envelope':
+                    return accelerationEnvelopeConvertDemo(file_data, sr, cutoff_data) if cutoff_data else accelerationEnvelopeConvert32Demo(file_data, sr)
+                return {}
 
-        def convert_unit(unit_name, file_data, sr, cutoff_data=None):
-            if unit_name == 'Velocity':
-                return velocityConvertDemo(file_data, sr, cutoff_data) if cutoff_data else velocityConvert32Demo(file_data, sr)
-            elif unit_name == 'Acceleration':
-                return accelerationConvertDemo(file_data, sr, cutoff_data) if cutoff_data else accelerationConvert32Demo(file_data, sr)
-            elif unit_name == 'Acceleration Envelope':
-                return accelerationEnvelopeConvertDemo(file_data, sr, cutoff_data) if cutoff_data else accelerationEnvelopeConvert32Demo(file_data, sr)
-            return {}
+            if time_difference.total_seconds() > 0:
+                # Fresh data
+                if 'bearingLocationType' not in bearingLocationDatas or bearingLocationDatas['bearingLocationType'] == "ONLINE":
+                    doc = db["RawData"].find_one({
+                        "BearingLoactionId": ObjectId(data["sensor_id"]),
+                        "axis": axis,
+                        "epochTime": data["date_time"]
+                    })
+                    if not doc:
+                        return return_data_not_found()
 
-        if time_difference.total_seconds() > 0:
-            # Fresh data
-            if 'bearingLocationType' not in bearingLocationDatas or bearingLocationDatas['bearingLocationType'] == "ONLINE":
-                doc = db["RawData"].find_one({
-                    "BearingLoactionId": ObjectId(data["sensor_id"]),
-                    "axis": axis,
-                    "epochTime": data["date_time"]
-                })
-                if not doc:
+                    File_Data = doc['data']
+                    SR_VALUE = 3000
+                    cutoff_data = bearingLocationDatas[data["unit_name"].lower()]['highpassCutoffFrequencyFft'], \
+                                bearingLocationDatas[data["unit_name"].lower()]['highpassOrderFft']
+                    RespondData = convert_unit(data["unit_name"], File_Data, SR_VALUE, cutoff_data)
+                else:
+                    All_History = read_from_parquet(f"{data['sensor_id']}.parquet", int(data["date_time"]))
+                    if All_History.empty:
+                        return return_data_not_found()
+
+                    for _, row in All_History.iterrows():
+                        File_Data = json.loads(row['data'])[axis]
+                    RespondData = convert_unit(data["unit_name"], File_Data, 20000)
+            else:
+                # Historical data
+                if not check_file_exists(f"{data['sensor_id']}.parquet"):
                     return return_data_not_found()
 
-                File_Data = doc['data']
-                SR_VALUE = 3000
-                cutoff_data = bearingLocationDatas[data["unit_name"].lower()]['highpassCutoffFrequencyFft'], \
-                              bearingLocationDatas[data["unit_name"].lower()]['highpassOrderFft']
-                RespondData = convert_unit(data["unit_name"], File_Data, SR_VALUE, cutoff_data)
-            else:
                 All_History = read_from_parquet(f"{data['sensor_id']}.parquet", int(data["date_time"]))
                 if All_History.empty:
                     return return_data_not_found()
 
-                for _, row in All_History.iterrows():
-                    File_Data = json.loads(row['data'])[axis]
-                RespondData = convert_unit(data["unit_name"], File_Data, 20000)
-        else:
-            # Historical data
-            if not check_file_exists(f"{data['sensor_id']}.parquet"):
-                return return_data_not_found()
+                if 'bearingLocationType' not in bearingLocationDatas or bearingLocationDatas['bearingLocationType'] == "ONLINE":
+                    for _, row in All_History.iterrows():
+                        if row["axis"] == axis:
+                            File_Data = json.loads(row["data"])
+                    SR_VALUE = 3000
+                    cutoff_data = bearingLocationDatas[data["unit_name"].lower()]['highpassCutoffFrequencyFft'], \
+                                bearingLocationDatas[data["unit_name"].lower()]['highpassOrderFft']
+                    RespondData = convert_unit(data["unit_name"], File_Data, SR_VALUE, cutoff_data)
+                else:
+                    for _, row in All_History.iterrows():
+                        File_Data = json.loads(row["data"])[axis]
+                    RespondData = convert_unit(data["unit_name"], File_Data, 20000)
 
-            All_History = read_from_parquet(f"{data['sensor_id']}.parquet", int(data["date_time"]))
-            if All_History.empty:
-                return return_data_not_found()
+            for key in ['Timeseries', 'twf_max', 'twf_min']:
+                RespondData.pop(key, None)
 
-            if 'bearingLocationType' not in bearingLocationDatas or bearingLocationDatas['bearingLocationType'] == "ONLINE":
-                for _, row in All_History.iterrows():
-                    if row["axis"] == axis:
-                        File_Data = json.loads(row["data"])
-                SR_VALUE = 3000
-                cutoff_data = bearingLocationDatas[data["unit_name"].lower()]['highpassCutoffFrequencyFft'], \
-                              bearingLocationDatas[data["unit_name"].lower()]['highpassOrderFft']
-                RespondData = convert_unit(data["unit_name"], File_Data, SR_VALUE, cutoff_data)
-            else:
-                for _, row in All_History.iterrows():
-                    File_Data = json.loads(row["data"])[axis]
-                RespondData = convert_unit(data["unit_name"], File_Data, 20000)
-
-        for key in ['Timeseries', 'twf_max', 'twf_min']:
-            RespondData.pop(key, None)
-
-        return return_data_found({"fft": RespondData})
-    except Exception as e:
-        print(traceback.format_exc())
-        return return_internal_server_error(e)
+            return return_data_found({"fft": RespondData})
+        except Exception as e:
+            print(traceback.format_exc())
+            return return_internal_server_error(e)
 
 @csrf_exempt
 @require_http_methods(["POST"])
@@ -2068,6 +2063,7 @@ from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad
 
 @csrf_exempt
+@require_http_methods(["GET"])
 def sensor_calibration(request, mac):
     key = b'abcdefghijklmnop'  # AES 128-bit key
     try:
@@ -2130,6 +2126,7 @@ def sensor_calibration(request, mac):
         return JsonResponse({'error': str(e)}, status=500)
     
 @csrf_exempt
+@require_http_methods(["GET"])
 def SensorCalibrationSerialNumber(request, serialNumber):
     key = b'abcdefghijklmnop' 
     try:
@@ -2220,6 +2217,7 @@ def get_sensor_config(request):
         return JsonResponse({"error": "Invalid method"}, status=405)
 
 @csrf_exempt
+@require_http_methods(["GET"])
 def SensorToken(request, MAC):
     key = b'abcdefghijklmnop'
     try:
@@ -2522,7 +2520,7 @@ def start_top_10_fft(request):
 def home(request):
     return HttpResponse("Django Server is running!")
 
-import highResolution
+# import highResolution
 
 @csrf_exempt
 @require_http_methods(["POST"])
@@ -2572,7 +2570,7 @@ def fft_high_resolution1_view(request):
         time_difference = data_date_time - start_date_time
 
         bearingLocationDatas = db["BearingLocation"].find_one({"_id": ObjectId(data["Sensor_Name"])})
-        machine_data = db["Machine"].find_one({"_id": ObjectId(data["Machine_Name"])})
+        machineDatas = db["Machine"].find_one({"_id": ObjectId(data["Machine_Name"])})
 
         axis_name = data["Axis_Id"]
 
@@ -2637,7 +2635,8 @@ def fft_high_resolution1_view(request):
                 
                 # Process data based on type
                 if data["Type"] == 'Velocity':
-                    RespondData = highResolution.Velocity_Convert_HighResolution_online(File_Data, SR_VALUE, NoOflines, highResolutionFmax, bearingLocationDatas['velocity']['highpassCutoffFrequencyFft'], bearingLocationDatas['velocity']['highpassOrderFft'], floorNoisePercentage)
+                    pass
+                    # RespondData = highResolution.Velocity_Convert_HighResolution_online(File_Data, SR_VALUE, NoOflines, highResolutionFmax, bearingLocationDatas['velocity']['highpassCutoffFrequencyFft'], bearingLocationDatas['velocity']['highpassOrderFft'], floorNoisePercentage)
                 elif data["Type"] == 'Acceleration':
                     RespondData = accelerationConvert32Demo(File_Data, SR_VALUE)
                 elif data["Type"] == 'Acceleration Envelope':
@@ -2647,7 +2646,8 @@ def fft_high_resolution1_view(request):
                 
                 # Process data based on type
                 if data["Type"] == 'Velocity':
-                    RespondData = highResolution.Velocity_Convert_HighResolution_online(File_Data, SR_VALUE, NoOflines, highResolutionFmax, bearingLocationDatas['velocity']['highpassCutoffFrequencyFft'], bearingLocationDatas['velocity']['highpassOrderFft'], floorNoisePercentage)
+                    pass
+                    # RespondData = highResolution.Velocity_Convert_HighResolution_online(File_Data, SR_VALUE, NoOflines, highResolutionFmax, bearingLocationDatas['velocity']['highpassCutoffFrequencyFft'], bearingLocationDatas['velocity']['highpassOrderFft'], floorNoisePercentage)
                 elif data["Type"] == 'Acceleration':
                     RespondData = accelerationConvert32Demo(File_Data, SR_VALUE)
                 elif data["Type"] == 'Acceleration Envelope':
@@ -2655,7 +2655,8 @@ def fft_high_resolution1_view(request):
             else:
                 SR_VALUE = 20000
                 if data["Type"] == 'Velocity':
-                    RespondData = highResolution.Velocity_Convert_HighResolution_online(File_Data, SR_VALUE, NoOflines, highResolutionFmax, bearingLocationDatas['velocity']['highpassCutoffFrequencyFft'], bearingLocationDatas['velocity']['highpassOrderFft'], floorNoisePercentage)
+                    pass
+                    # RespondData = highResolution.Velocity_Convert_HighResolution_online(File_Data, SR_VALUE, NoOflines, highResolutionFmax, bearingLocationDatas['velocity']['highpassCutoffFrequencyFft'], bearingLocationDatas['velocity']['highpassOrderFft'], floorNoisePercentage)
                 elif data["Type"] == 'Acceleration':
                     RespondData = accelerationConvert32Demo(File_Data, SR_VALUE)
                 elif data["Type"] == 'Acceleration Envelope':
@@ -2689,7 +2690,8 @@ def fft_high_resolution1_view(request):
 
                         # Process data based on type
                         if data["Type"] == 'Velocity':
-                            RespondData = highResolution.Velocity_Convert_HighResolution_online(File_Data, SR_VALUE, highResolutionNoOflines, highResolutionFmax, highpass_values[0], highpass_values[1], floorNoisePercentage)
+                            pass
+                            # RespondData = highResolution.Velocity_Convert_HighResolution_online(File_Data, SR_VALUE, highResolutionNoOflines, highResolutionFmax, highpass_values[0], highpass_values[1], floorNoisePercentage)
                         elif data["Type"] == 'Acceleration':
                             RespondData = accelerationConvert32Demo(File_Data, SR_VALUE)
                         elif data["Type"] == 'Acceleration Envelope':
@@ -2697,9 +2699,10 @@ def fft_high_resolution1_view(request):
                     else:
                         if data["Type"] == 'Velocity':
                             if SR_VALUE == 3000:
-                                RespondData = highResolution.Velocity_Convert_HighResolution_online(File_Data, SR_VALUE, highResolutionNoOflines, highResolutionFmax, highpass_values[0], highpass_values[1], floorNoisePercentage)
+                                pass
+                                # RespondData = highResolution.Velocity_Convert_HighResolution_online(File_Data, SR_VALUE, highResolutionNoOflines, highResolutionFmax, highpass_values[0], highpass_values[1], floorNoisePercentage)
                             else:
-                                RespondData = velocityConvertHighResolution(File_Data, SR_VALUE, fullFileData[0]['NOS'], (highpass_values[0], highpass_values[1]), lowpass_values, floorNoisePercentage=floorNoisePercentage)
+                                RespondData = velocityConvertHighResolution(File_Data, SR_VALUE, fullFileData[0]['NOS'], (highpass_values[0], highpass_values[1]), lowpass_values, floorNoisePercentage)
 
                         elif data["Type"] == 'Acceleration':
                             if SR_VALUE == 3000:
@@ -2748,7 +2751,8 @@ def fft_high_resolution1_view(request):
                             sr_value = offline_data_store['sr']
 
                             if request.GET["Type"] == 'Velocity':
-                                respond_data = highResolution.Velocity_Convert_HighResolution_online(file_data, sr_value, no_of_lines, high_resolution_fmax, bearingLocationDatas['velocity']['highpassCutoffFrequencyFft'], bearingLocationDatas['velocity']['highpassOrderFft'], floorNoisePercentage)
+                                pass
+                                # respond_data = highResolution.Velocity_Convert_HighResolution_online(file_data, sr_value, no_of_lines, high_resolution_fmax, bearingLocationDatas['velocity']['highpassCutoffFrequencyFft'], bearingLocationDatas['velocity']['highpassOrderFft'], floorNoisePercentage)
                             elif request.GET["Type"] == 'Acceleration':
                                 respond_data = accelerationConvert32Demo(file_data, sr_value)
                             elif request.GET["Type"] == 'Acceleration Envelope':
@@ -2756,7 +2760,8 @@ def fft_high_resolution1_view(request):
                         elif 'datatype' in offline_data_store and offline_data_store['datatype'] == '32bit':
                             sr_value = offline_data_store['sr']
                             if request.GET["Type"] == 'Velocity':
-                                respond_data = highResolution.Velocity_Convert_HighResolution_online(file_data, sr_value, no_of_lines, high_resolution_fmax, bearingLocationDatas['velocity']['highpassCutoffFrequencyFft'], bearingLocationDatas['velocity']['highpassOrderFft'], floorNoisePercentage)
+                                pass
+                                # respond_data = highResolution.Velocity_Convert_HighResolution_online(file_data, sr_value, no_of_lines, high_resolution_fmax, bearingLocationDatas['velocity']['highpassCutoffFrequencyFft'], bearingLocationDatas['velocity']['highpassOrderFft'], floorNoisePercentage)
                             elif request.GET["Type"] == 'Acceleration':
                                 respond_data = accelerationConvert32Demo(file_data, sr_value)
                             elif request.GET["Type"] == 'Acceleration Envelope':
@@ -2764,7 +2769,8 @@ def fft_high_resolution1_view(request):
                         else:
                             sr_value = 20000
                             if request.GET["Type"] == 'Velocity':
-                                respond_data = highResolution.Velocity_Convert_HighResolution_online(file_data, sr_value, no_of_lines, high_resolution_fmax, bearingLocationDatas['velocity']['highpassCutoffFrequencyFft'], bearingLocationDatas['velocity']['highpassOrderFft'], floorNoisePercentage)
+                                pass
+                                # respond_data = highResolution.Velocity_Convert_HighResolution_online(file_data, sr_value, no_of_lines, high_resolution_fmax, bearingLocationDatas['velocity']['highpassCutoffFrequencyFft'], bearingLocationDatas['velocity']['highpassOrderFft'], floorNoisePercentage)
                             elif request.GET["Type"] == 'Acceleration':
                                 respond_data = accelerationConvert32Demo(file_data, sr_value)
                             elif request.GET["Type"] == 'Acceleration Envelope':
@@ -2795,7 +2801,8 @@ def fft_high_resolution1_view(request):
                             sr_value = 10000
 
                             if request.GET["Type"] == 'Velocity':
-                                respond_data = highResolution.Velocity_Convert_HighResolution_online(file_data, sr_value, high_resolution_no_of_lines, high_resolution_fmax, highpass_values[0], highpass_values[1], floorNoisePercentage)
+                                pass
+                                # respond_data = highResolution.Velocity_Convert_HighResolution_online(file_data, sr_value, high_resolution_no_of_lines, high_resolution_fmax, highpass_values[0], highpass_values[1], floorNoisePercentage)
                             elif request.GET["Type"] == 'Acceleration':
                                 respond_data = accelerationConvert32Demo(file_data, sr_value)
                             elif request.GET["Type"] == 'Acceleration Envelope':
@@ -2805,9 +2812,10 @@ def fft_high_resolution1_view(request):
                             sr_value = 3000
                             if request.GET["Type"] == 'Velocity':
                                 if sr_value == 3000:
-                                    respond_data = highResolution.Velocity_Convert_HighResolution_online(file_data, sr_value, high_resolution_no_of_lines, high_resolution_fmax, highpass_values[0], highpass_values[1], floorNoisePercentage)
+                                    pass
+                                    # respond_data = highResolution.Velocity_Convert_HighResolution_online(file_data, sr_value, high_resolution_no_of_lines, high_resolution_fmax, highpass_values[0], highpass_values[1], floorNoisePercentage)
                                 else:
-                                    respond_data = velocityConvertHighResolution(file_data, sr_value, full_file_data[0]['NOS'], (highpass_values[0], highpass_values[1]), lowpass_values, floorNoisePercentage=floorNoisePercentage)
+                                    respond_data = velocityConvertHighResolution(file_data, sr_value, full_file_data[0]['NOS'], (highpass_values[0], highpass_values[1]), lowpass_values, floorNoisePercentage)
 
                             elif request.GET["Type"] == 'Acceleration':
                                 if sr_value == 3000:

@@ -104,9 +104,18 @@ class CustomUserSerializer(serializers.ModelSerializer):
 
     
 class CustomBearingSerializer(serializers.ModelSerializer):
+    id = serializers.CharField(read_only=True)  # force id to be string
+
     class Meta:
         model = Bearing
         fields = '__all__'
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        for key, value in data.items():
+            if isinstance(value, ObjectId):
+                data[key] = str(value)
+        return data
 
 class CustomBearingLocationSerializer(serializers.ModelSerializer):
     class Meta:
