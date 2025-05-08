@@ -266,15 +266,9 @@ class MachineViewSet(viewsets.ModelViewSet):
     serializer_class = MachineSerializer
 
 class BearingLocationViewSet(viewsets.ModelViewSet):
+    id = ObjectIdField(read_only=True)
     queryset = BearingLocation.objects.all()
     serializer_class = BearingLocationSerializer
-
-    def list(self, request, *args, **kwargs):
-        # Call the original list method
-        return super().list(request, *args, **kwargs)
-
-    def create(self, request, *args, **kwargs):
-        return super().create(request, *args, **kwargs)
     
 class UserViewSet(viewsets.ModelViewSet):
     id = ObjectIdField(read_only=True)

@@ -63,53 +63,37 @@ class SensorSerializer(serializers.ModelSerializer):
         model = Sensor
         fields = '__all__'
 
-def convert_object_ids(data):
-    if isinstance(data, dict):
-        print("Converting dict:", data)  # Debug print statement
-        return {k: convert_object_ids(v) for k, v in data.items()}
-    elif isinstance(data, list):
-        print("Converting list:", data)  # Debug print statement
-        return [convert_object_ids(item) for item in data]
-    elif isinstance(data, ObjectId):
-        print("Converting ObjectId:", data)  # Debug print statement
-        return str(data)
-    else:
-        return data
-
 class BearingLocationSerializer(serializers.ModelSerializer):
-    id = serializers.CharField(read_only=True)
-    machineId = serializers.PrimaryKeyRelatedField(queryset=Machine.objects.all())
-    bearingId = serializers.PrimaryKeyRelatedField(queryset=Bearing.objects.all())
-    statusId = serializers.PrimaryKeyRelatedField(queryset=Status.objects.all())
-    lowFrequencyFmax = serializers.FloatField(required=False, allow_null=True)
-    lowFrequencyNoOflines = serializers.IntegerField(required=False, allow_null=True)
-    mediumFrequencyFmax = serializers.FloatField(required=False, allow_null=True)
-    mediumFrequencyNoOflines = serializers.IntegerField(required=False, allow_null=True)
-    highFrequencyFmax = serializers.FloatField(required=False, allow_null=True)
-    highFrequencyNoOflines = serializers.IntegerField(required=False, allow_null=True)
+    id = serializers.SerializerMethodField()
 
     class Meta:
         model = BearingLocation
         fields = '__all__'
 
-    extra_kwargs = {
-            'lowFrequencyFmax': {'required': False, 'allow_null': True},
-            'lowFrequencyNoOflines': {'required': False, 'allow_null': True},
-            'mediumFrequencyFmax': {'required': False, 'allow_null': True},
-            'mediumFrequencyNoOflines': {'required': False, 'allow_null': True},
-            'highFrequencyFmax': {'required': False, 'allow_null': True},
-            'highFrequencyNoOflines': {'required': False, 'allow_null': True},
-        }
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def get_id(self, obj):
+        return str(obj.id)
 
     def to_representation(self, instance):
-        representation = {}
-        for field in self.fields:
-            try:
-                value = self.fields[field].to_representation(getattr(instance, field))
-                representation[field] = value
-            except Exception as e:
-                print(f"[ERROR] Serializing field '{field}' with value '{getattr(instance, field)}' caused: {e}")
-                raise e  # Reraise so DRF still catches it
+        representation = super().to_representation(instance)        
+        representation['id'] = str(representation['id'])
+        
+        foreign_key_fields = [
+            'machineId', 'bearingId', 'statusId', 'accelerationEnvelope_id',
+            'velocity_id', 'acceleration_id', 'orientation_id', 'technologyParamId'
+        ]
+
+        for field in foreign_key_fields:
+            if hasattr(instance, field) and getattr(instance, field):
+                representation[field] = str(getattr(instance, field).id)
+
+        # Convert ObjectId instances in nested dictionaries
+        for key, value in representation.items():
+            if isinstance(value, dict) and '_id' in value and '$oid' in value['_id']:
+                representation[key]['_id'] = value['_id']['$oid']
+
         return representation
 
 class MachineSerializer(serializers.ModelSerializer):

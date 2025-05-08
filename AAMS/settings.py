@@ -282,3 +282,19 @@ STATICFILES_FINDERS = (
 # To access Parquet
 PARQUET_PATH = 'path_to_parquet_files/'
 NEW_PQ_DIR = 'path_to_new_parquet_files/'
+
+# LOGGING = {
+# 'version': 1,
+# 'disable_existing_loggers': False,
+# 'handlers': {
+# 'console': {
+# 'class': 'logging.StreamHandler',
+# },
+# },
+# 'loggers': {
+# '': {
+# 'handlers': ['console'],
+# 'level': 'DEBUG',
+# },
+# },
+# }
