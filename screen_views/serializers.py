@@ -101,7 +101,6 @@ class CustomUserSerializer(serializers.ModelSerializer):
                 'name': obj.customerId.name
             }
         return None
-
     
 class CustomBearingSerializer(serializers.ModelSerializer):
     id = serializers.CharField(read_only=True)  # force id to be string

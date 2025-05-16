@@ -8,6 +8,8 @@ import base64
 from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_exempt
 from datetime import datetime, timedelta, timezone
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import pad
 
 # Access settings
 audio_directory = settings.AUDIO_DIRECTORY
@@ -2059,9 +2061,6 @@ update_fmax_noOfLine_Offline_map = {
                 (1200, 6000): (1200, 32000)
             }
 
-from Crypto.Cipher import AES
-from Crypto.Util.Padding import pad
-
 @csrf_exempt
 @require_http_methods(["GET"])
 def sensor_calibration(request, mac):
@@ -2702,7 +2701,8 @@ def fft_high_resolution1_view(request):
                                 pass
                                 # RespondData = highResolution.Velocity_Convert_HighResolution_online(File_Data, SR_VALUE, highResolutionNoOflines, highResolutionFmax, highpass_values[0], highpass_values[1], floorNoisePercentage)
                             else:
-                                RespondData = velocityConvertHighResolution(File_Data, SR_VALUE, fullFileData[0]['NOS'], (highpass_values[0], highpass_values[1]), lowpass_values, floorNoisePercentage)
+                                pass
+                                # RespondData = velocityConvertHighResolution(File_Data, SR_VALUE, fullFileData[0]['NOS'], (highpass_values[0], highpass_values[1]), lowpass_values, floorNoisePercentage)
 
                         elif data["Type"] == 'Acceleration':
                             if SR_VALUE == 3000:
@@ -2815,7 +2815,8 @@ def fft_high_resolution1_view(request):
                                     pass
                                     # respond_data = highResolution.Velocity_Convert_HighResolution_online(file_data, sr_value, high_resolution_no_of_lines, high_resolution_fmax, highpass_values[0], highpass_values[1], floorNoisePercentage)
                                 else:
-                                    respond_data = velocityConvertHighResolution(file_data, sr_value, full_file_data[0]['NOS'], (highpass_values[0], highpass_values[1]), lowpass_values, floorNoisePercentage)
+                                    pass
+                                    # respond_data = velocityConvertHighResolution(file_data, sr_value, full_file_data[0]['NOS'], (highpass_values[0], highpass_values[1]), lowpass_values, floorNoisePercentage)
 
                             elif request.GET["Type"] == 'Acceleration':
                                 if sr_value == 3000:

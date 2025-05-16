@@ -1,16 +1,9 @@
 from django.urls import path, include
-from .views.dashboard_views import *
-from .views.adminpage_view import *
-from .views.schedule_views import *
-from .views.dashboardSettings_views import *
-from .views.reports_view import * 
-from .views.machine_views import *
+from .views import *
 from Feedback.views import *
 from rest_framework.routers import DefaultRouter
-from rest_framework import routers
 from Root.views import *
-from .views.userReport_view import *
-from screen_views.views.machine_dashboard import *
+# from screen_views.views.machine_dashboard import *
 
 router = DefaultRouter()
 models = apps.get_models()
@@ -77,7 +70,7 @@ urlpatterns = [
     path('iso-standards/all', AlertLimitsViewSet.as_view({'get': 'list'}), name='iso-standards-all'),
     path('iso-standards/', AlertLimitsViewSet.as_view({'get': 'list'}), name='iso-standards-all'),     
     path('feedback/all/unique', FeedbackViewSet.as_view({'get': 'list'}), name='feedback-all'),
-    path('test', home),
+    # path('test', home),
 
     # path('fft/setValue', set_calibration_value_in_file),
     # path('audio', start_audio), 

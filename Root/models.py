@@ -256,14 +256,26 @@ class ObjectIdEncoder(json.JSONEncoder):
         if isinstance(obj, ObjectId):
             return str(obj)
         return json.JSONEncoder.default(self, obj)
+    
+def convert_objectid_to_str(data):
+    if isinstance(data, dict):
+        return {k: convert_objectid_to_str(v) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [convert_objectid_to_str(i) for i in data]
+    elif isinstance(data, ObjectId):
+        return str(data)
+    else:
+        return data
 
 @auto_admin_register()
 class BearingLocation(models.Model):
     id = ObjectIdAutoField(primary_key=True)
     name = models.CharField(max_length=255)
+    bearingLocationType = models.CharField(max_length=255)
+
     machineId = models.ForeignKey('Machine', on_delete=models.CASCADE)
     bearingId = models.ForeignKey('Bearing', on_delete=models.CASCADE)
-    bearingLocationType = models.CharField(max_length=255)
+    statusId = models.ForeignKey('Status', on_delete=models.CASCADE, default='65642670e8b6d946f53bf31c')
 
     velocity = models.JSONField()
     acceleration = models.JSONField()
@@ -272,7 +284,6 @@ class BearingLocation(models.Model):
 
     dataFetchingInterval = models.IntegerField()
     rawDataSavingInterval = models.DateTimeField(null=True, blank=True)
-    statusId = models.ForeignKey('Status', on_delete=models.CASCADE, default='65642670e8b6d946f53bf31c')
     dataStoreFlag = models.BooleanField(default=False)
     averagingFlag = models.IntegerField(default=0)
     fSpanMin = models.IntegerField(default=8)
@@ -284,8 +295,8 @@ class BearingLocation(models.Model):
     highFrequencyFmax = models.FloatField(null=True, blank=True)
     highFrequencyNoOflines = models.IntegerField(null=True, blank=True)
 
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    createdAt = models.DateTimeField(auto_now_add=True)
+    updatedAt = models.DateTimeField(auto_now=True)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -380,41 +391,16 @@ class BearingLocation(models.Model):
                 'z': ''
             }
         }
-        
+
+    def clean_jsonfields(self):
+        self.velocity = convert_objectid_to_str(self.velocity)
+        self.acceleration = convert_objectid_to_str(self.acceleration)
+        self.accelerationEnvelope = convert_objectid_to_str(self.accelerationEnvelope)
+        self.orientation = convert_objectid_to_str(self.orientation)
+
     def save(self, *args, **kwargs):
-        for field, default_value in self.default_values.items():
-            current_value = getattr(self, field)
-            if not current_value:
-                setattr(self, field, default_value)
+        self.clean_jsonfields()
         super().save(*args, **kwargs)
-
-    """ def to_dict(self):
-        data = {}
-        for field in self._meta.get_fields():
-            value = getattr(self, field.name)
-            if isinstance(value, ObjectId):
-                data[field.name] = str(value)
-            elif field.many_to_many:
-                data[field.name] = [str(obj.id) for obj in value.all()]
-            elif field.many_to_one or field.one_to_one:
-                if field.name in ['machineId', 'bearingId', 'statusId']:
-                    data[field.name] = str(value.id)
-                else:
-                    data[field.name] = value
-            else:
-                if isinstance(value, dict):
-                    data[field.name] = value.copy()  # Make a copy to avoid modifying the original data
-                    for k, v in data[field.name].items():
-                        if isinstance(v, ObjectId):
-                            data[field.name][k] = str(v)
-                        elif isinstance(v, dict):
-                            data[field.name][k] = {kk: str(vv) if isinstance(vv, ObjectId) else vv for kk, vv in v.items()}
-                else:
-                    data[field.name] = value
-        return data
-
-    def to_json(self):
-        return json.dumps(self.to_dict(), cls=ObjectIdEncoder) """
 
 @auto_admin_register()
 class Technology(models.Model):
