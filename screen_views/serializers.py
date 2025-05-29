@@ -49,28 +49,6 @@ class CustomTechnologySerializer(serializers.ModelSerializer):
         model = TechnologyParameter
         fields = '__all__'
 
-class CustomSensorSerializer(serializers.ModelSerializer):
-    customerName = serializers.CharField(source='customerId.name')
-    areaName = serializers.CharField(source='areaId.name')
-    subareaName = serializers.CharField(source='subAreaId.name')
-    bearingLocationName = serializers.CharField(source='bearingLocationId.name')
-    machineName = serializers.CharField(source='machineId.name')
-
-    class Meta:
-        model = Sensor
-        fields = ['id', 'name', 'gRange', 'numberOfSamples', 'address', 'areaId', 'subAreaId', 'machineId', 'customerId', 
-                  'bearingLocationId', 'machineName', 'customerName', 'areaName', 'subareaName', 'bearingLocationName']
-        
-class CustomMultiChannelSensorSerializer(serializers.ModelSerializer):
-    machineName = serializers.CharField(source='machineId.name')
-    customerName = serializers.CharField(source='customerId.name')
-    areaName = serializers.CharField(source='areaId.name')
-
-    class Meta:
-        model = MultiChannelSensor
-        fields = ['id', 'name', 'ssid', 'password', 'gRange', 'reportingFrequency', 'samplingFrequency', 'numberOfSamples', 'areaId', 
-                  'subAreaId', 'machineId', 'customerId', 'machineName', 'customerName', 'areaName']
-
 class CustomerSerializer(serializers.Serializer):
     id = serializers.CharField()
     name = serializers.CharField()
@@ -142,29 +120,3 @@ class CustomDailyTaskScheduleSerializer(serializers.ModelSerializer):
     class Meta:
         model = DailyTaskSchedule
         fields = '__all__'
-
-class CustomSensorSerializer(serializers.ModelSerializer):
-    areaId = serializers.SerializerMethodField()
-    customerId = serializers.SerializerMethodField()
-
-    class Meta:
-        model = Sensor
-        fields = [
-            'id', 'name', 'address', 'serialNumber', 'statusId', 'gRange',
-            'ssid', 'password', 'configuration', 'reportingFrequency', 
-            'samplingFrequency', 'numberOfSamples', 'postUrl', 'tFlag', 
-            'createdAt', 'updatedAt', 'areaId', 'customerId'
-        ]
-
-    def get_areaId(self, obj):
-        try:
-            return str(obj.machineId.areaId.id) if obj.machineId and obj.machineId.areaId else None
-        except:
-            return None
-
-    def get_customerId(self, obj):
-        try:
-            return str(obj.machineId.customerId.id) if obj.machineId and obj.machineId.customerId else None
-        except:
-            return None
-

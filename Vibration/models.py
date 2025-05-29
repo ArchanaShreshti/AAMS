@@ -184,7 +184,7 @@ class LatestRMSData(models.Model):
 
         super().save(*args, **kwargs)
 
-@auto_admin_register
+@auto_admin_register()
 class MultiChannelSensor(models.Model):
     id=ObjectIdAutoField(primary_key=True)
     customerId = models.ForeignKey('Root.Customer', on_delete=models.CASCADE)

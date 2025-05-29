@@ -1,8 +1,8 @@
 from django.conf import settings
 from django.http import JsonResponse
-from screen_views.constants import *
+from Vibration.screenAPIs.constants import *
 import numpy as np
-from screen_views.utils import *
+from Vibration.screenAPIs.utils import *
 import json
 import base64
 from django.views.decorators.http import require_http_methods
@@ -238,7 +238,7 @@ def my_view(request):
 
 @csrf_exempt
 @require_http_methods(['POST'])
-def start_audio(request):
+def startAudio(request):
     try:
         data = json.loads(request.body)
         db = settings.MONGO_DB
@@ -253,10 +253,13 @@ def start_audio(request):
             "A-Axis": "A"
         }
 
+        # Always use ObjectId for MongoDB queries if _id is ObjectId
+        sensor_oid = ObjectId(data["Sensor_Name"]) if ObjectId.is_valid(data["Sensor_Name"]) else data["Sensor_Name"]
+
         if "date_Time" not in data:
             end_date_Time = int(datetime.now().timestamp())
             epoch_Data = list(db["ParameterTrend"].find({
-                "BearingLoactionId": data["Sensor_Name"],
+                "BearingLoactionId": sensor_oid,
                 "axis": axis_mapping[data["Axis_Id"]],
                 "rawDataPresent": True,
                 "epochTime": {"$gte": int(start_date_time.timestamp()), "$lte": end_date_Time}
@@ -274,11 +277,13 @@ def start_audio(request):
         data_date_time = datetime.utcfromtimestamp(int(str(epoch_Date_Time)))
         time_difference = data_date_time - start_date_time
 
-        bearingLocationDatas = db["BearingLocation"].find_one({"_id": data["Sensor_Name"]})
+        bearingLocationDatas = db["BearingLocation"].find_one({"_id": sensor_oid})
         File_Data = []
         axis_Name = data["Axis_Id"]
 
-        if 'bearingLocationType' in bearingLocationDatas and bearingLocationDatas['bearingLocationType'] == "OFFLINE":
+        All_History = None
+
+        if bearingLocationDatas and 'bearingLocationType' in bearingLocationDatas and bearingLocationDatas['bearingLocationType'] == "OFFLINE":
             if latest:
                 start_date_Time = int((datetime.now() + timedelta(days=-int(365))).timestamp())
             if "Analytics_Types" not in data or data['Analytics_Types'] == "OM":
@@ -294,7 +299,7 @@ def start_audio(request):
             elif data['Analytics_Types'] in ['LF', 'MF', 'HF']:
                 All_History = read_from_new_parquet(data["Sensor_Name"] + ".parquet", data['Machine_Name'], int(epoch_Date_Time))
 
-        if All_History.empty:
+        if All_History is None or All_History.empty:
             return JsonResponse({"Response": "Data not Found"}, status=404)
 
         for index, row in All_History.iterrows():
@@ -320,7 +325,7 @@ def start_audio(request):
 
 @csrf_exempt
 @require_http_methods(['POST'])
-def start_timeseries(request):
+def startTimeseries(request):
     try:
         data = json.loads(request.body)
         db = settings.MONGO_DB
@@ -510,7 +515,7 @@ def start_timeseries(request):
 
 @csrf_exempt
 @require_http_methods(["POST"])
-def start_fft1(request):
+def startFFT1(request):
     try:
         data = json.loads(request.body)
         print("fft:", data)
@@ -680,7 +685,7 @@ from django.utils.timezone import now
 
 @csrf_exempt
 @require_http_methods(["POST"])
-def fft_view(request):
+def fftView(request):
     try:
         data = json.loads(request.body)
 
@@ -749,7 +754,7 @@ def fft_view(request):
         if len(file_data) != 30000:
             return JsonResponse({"error": "Insufficient data points"}, status=400)
 
-        # Convert based on signal type
+        # FFT calculation and conversion
         if signal_type == "Velocity":
             fft_data = velocityConvert24Demo(file_data, sample_rate, rpm, calibration_value, floor_noise_threshold, high_pass, low_pass, high_order, low_order)
         elif signal_type == "Acceleration":
@@ -759,11 +764,17 @@ def fft_view(request):
         else:
             return JsonResponse({"error": "Unsupported signal type"}, status=400)
 
+        # Calculate fft_min and fft_max
+        fft_min = 0
+        fft_max = sample_rate // 2
+
         current_time = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
         return JsonResponse({
             "FFT": fft_data,
             "SR": sample_rate,
+            "fft_max": fft_max,
+            "fft_min": fft_min,
             "timestamp": current_time
         })
 
@@ -772,105 +783,112 @@ def fft_view(request):
 
 @csrf_exempt
 @require_http_methods(["POST"])
-def start_parameter_trends(request):
-    if request.method == "POST":
-        try:
-            data = json.loads(request.body)
-            print("ParameterTrends:", data)
-            
-            # MongoDB connection setup (assuming you have a connection set up)
-            db = client[settings.MONGODB_NAME]
+def startParameterTrendsv(request):
+    try:
+        data = json.loads(request.body)
+        db = client[settings.MONGODB_NAME]
+        bearing_location_id = data["Sensor_Name"]
 
-            bearing_location_id = data["Sensor_Name"]
-            bearingLocationDatas = db["BearingLocation"].find_one({"_id": ObjectId(bearing_location_id)})
+        # Always use find_one for a single document
+        bearing_location_data = db["Root_bearinglocation"].find_one({"_id": ObjectId(bearing_location_id)})
 
-            end_date_time = int(datetime.now().astimezone(settings.GMT_TIMEZONE).timestamp())
+        if not bearing_location_data or not isinstance(bearing_location_data, dict):
+            return JsonResponse({"Response": "Bearing location not found"}, status=404)
 
-            # Start and End Date Calculation
-            if data['days'] <= 1:
+        bearing_location_type = bearing_location_data.get('bearingLocationType')
+
+        end_date_time = int(datetime.now().astimezone(settings.GMT_TIMEZONE).timestamp())
+
+        if data['days'] <= 1:
+            if data['days'] == 0:
+                start_date_time = int((datetime.now().astimezone(settings.GMT_TIMEZONE) + timedelta(days=-365)).timestamp())
+                number_of_data = 120
+            elif data['days'] == 1:
+                start_date_time = int((datetime.now().astimezone(settings.GMT_TIMEZONE) + timedelta(days=-1)).timestamp())
+                number_of_data = None
+        else:
+            start_date_time = int((datetime.now().astimezone(settings.GMT_TIMEZONE) + timedelta(days=-int(data['days']))).timestamp())
+            number_of_data = None
+
+        all_history = None
+        if bearing_location_type == "OFFLINE":
+            if "Analytics_Types" not in data or data['Analytics_Types'] == "OM":
+                all_history = read_from_parquet(f"RMS_{bearing_location_id}.parquet", start_date_time, end_date_time, number_of_data)
+            elif data['Analytics_Types'] in ['LF', 'MF', 'HF']:
+                all_history = read_from_new_parquet(
+                    f"RMS_{bearing_location_id}.parquet",
+                    data['Machine_name'],
+                    start_date_time,
+                    end_date_time,
+                    number_of_data,
+                    analyticsType=data['Analytics_Types']
+                )
+        else:
+            all_history = None
+
+        if bearing_location_type == "OFFLINE" and all_history is not None and hasattr(all_history, 'empty') and all_history.empty:
+            return JsonResponse({"Response": "Data not Found"}, status=404)
+
+        h, v, a = [], [], []
+
+        if bearing_location_type == "OFFLINE" and all_history is not None:
+            for index, row in all_history.iterrows():
+                datetime_val = row['timestamp']
+                rms_data = json.loads(row['data'])
+                for axis in rms_data:
+                    if 'AccelerationEnvelope' in rms_data[axis]:
+                        rms_data[axis]['Acceleration Envelope'] = rms_data[axis].pop('AccelerationEnvelope')
+                    axis_key = next(iter(rms_data.keys()))
+                    if axis_key == "H":
+                        h.append((datetime_val, rms_data["H"][data["Type"]], fileFind(1)))
+                    elif axis_key == "V":
+                        v.append((datetime_val, rms_data["V"][data["Type"]], fileFind(1)))
+                    elif axis_key == "A":
+                        a.append((datetime_val, rms_data["A"][data["Type"]], fileFind(1)))
+        else:
+            for axis in ['H', 'V', 'A']:
                 if data['days'] == 0:
-                    start_date_time = int((datetime.now().astimezone(settings.GMT_TIMEZONE) + timedelta(days=-365)).timestamp())
-                    number_of_data = 120
-                    # Check for offline bearing location and fetch data accordingly
-                    if 'bearingLocationType' in bearingLocationDatas and bearingLocationDatas['bearingLocationType'] == "OFFLINE":
-                        if "Analytics_Types" not in data or data['Analytics_Types'] == "OM":
-                            All_History = read_from_parquet("RMS_" + bearing_location_id + ".parquet", start_date_time, end_date_time, number_of_data)
-                        elif data['Analytics_Types'] in ['LF', 'MF', 'HF']:
-                            All_History = read_from_new_parquet("RMS_" + bearing_location_id + ".parquet", data['Machine_Name'], start_date_time, end_date_time, number_of_data, analyticsType=data['Analytics_Types'])
-                elif data['days'] == 1:
-                    start_date_time = int((datetime.now().astimezone(settings.GMT_TIMEZONE) + timedelta(days=-1)).timestamp())
-                    if 'bearingLocationType' in bearingLocationDatas and bearingLocationDatas['bearingLocationType'] == "OFFLINE":
-                        if "Analytics_Types" not in data or data['Analytics_Types'] == "OM":
-                            All_History = read_from_parquet("RMS_" + bearing_location_id + ".parquet", start_date_time, end_date_time)
-                        elif data['Analytics_Types'] in ['LF', 'MF', 'HF']:
-                            All_History = read_from_new_parquet("RMS_" + bearing_location_id + ".parquet", data['Machine_Name'], start_date_time, end_date_time, analyticsType=data['Analytics_Types'])
+                    rms_data = list(db["ParameterTrend"].find({
+                        "BearingLoactionId": ObjectId(bearing_location_id),
+                        "axis": axis,
+                        "epochTime": {"$gte": start_date_time, "$lte": end_date_time}
+                    }).sort([("_id", -1)]).limit(number_of_data))
                 else:
-                    # Handle additional cases here if necessary
-                    pass
-
-            elif data['days'] > 1:
-                start_date_time = int((datetime.now().astimezone(settings.GMT_TIMEZONE) + timedelta(days=-int(data['days']))).timestamp())
-                All_History = read_from_parquet("RMS_" + bearing_location_id + ".parquet", start_date_time, end_date_time)
-
-            # Process Parameter Trend Data
-            if 'bearingLocationType' not in bearingLocationDatas or bearingLocationDatas['bearingLocationType'] == "ONLINE":
-                H, V, A = [], [], []
-                for axis in ['H', 'V', 'A']:
                     rms_data = list(db["ParameterTrend"].find({
                         "BearingLoactionId": ObjectId(bearing_location_id),
                         "axis": axis,
                         "epochTime": {"$gte": start_date_time, "$lte": end_date_time}
                     }).sort([("_id", -1)]))
-                    
-                    # Handle the returned data
-                    if rms_data:
-                        for rd in rms_data:
-                            DATETIME = rd['epochTime']
-                            if axis == "H":
-                                H.append((DATETIME, rd['data'][data["Type"]], rd['rawDataPresent']))
-                            elif axis == "V":
-                                V.append((DATETIME, rd['data'][data["Type"]], rd['rawDataPresent']))
-                            elif axis == "A":
-                                A.append((DATETIME, rd['data'][data["Type"]], rd['rawDataPresent']))
-            
-            elif 'bearingLocationType' in bearingLocationDatas and bearingLocationDatas['bearingLocationType'] == "OFFLINE":
-                # Offline data processing here
-                H, V, A = [], [], []
-                for row in All_History.iterrows():
-                    DATETIME = row['timestamp']
-                    rms_data = json.loads(row['data'])
-                    for axis in rms_data:
-                        if 'AccelerationEnvelope' in rms_data[axis]:
-                            rms_data[axis]['Acceleration Envelope'] = rms_data[axis].pop('AccelerationEnvelope')
-                    axisKey = next(iter(rms_data.keys()))
-                    if axisKey == "H":
-                        H.append((DATETIME, rms_data["H"][data["Type"]], fileFind(1)))
-                    elif axisKey == "V":
-                        V.append((DATETIME, rms_data["V"][data["Type"]], fileFind(1)))
-                    elif axisKey == "A":
-                        A.append((DATETIME, rms_data["A"][data["Type"]], fileFind(1)))
 
-            # Sort and return the response
-            H = sorted(H, key=lambda x: x[0])
-            A = sorted(A, key=lambda x: x[0])
-            V = sorted(V, key=lambda x: x[0])
+                if rms_data:
+                    for rd in rms_data:
+                        datetime_val = rd['epochTime']
+                        getattr([h, v, a][ord(axis) - ord('H')], 'append')(
+                            (datetime_val, rd['data'][data["Type"]], rd.get('rawDataPresent', None))
+                        )
 
-            if "all" == data['axis'].lower():
-                input_dict = {"H": H, "V": V, "A": A}
-                output_list = [{"name": key, "value": value} for key, value in input_dict.items()]
-                return JsonResponse(output_list, safe=False)
-            elif data['axis'] == "H-Axis":
-                return JsonResponse([{"name": "H", "value": H}], safe=False)
-            elif data['axis'] == "V-Axis":
-                return JsonResponse([{"name": "V", "value": V}], safe=False)
-            elif data['axis'] == "A-Axis":
-                return JsonResponse([{"name": "A", "value": A}], safe=False)
-            else:
-                return JsonResponse({"Response": []}, status=404)
+        h = sorted(h, key=lambda x: x[0])
+        a = sorted(a, key=lambda x: x[0])
+        v = sorted(v, key=lambda x: x[0])
 
-        except Exception as e:
-            print(traceback.print_exc())
-            return JsonResponse({"Response": "Data not Found"}, status=500)
+        # Prepare the output as per axis selection
+        if "all" == data['axis'].lower():
+            input_dict = {"H": h, "V": v, "A": a}
+            output_list = [{"name": key, "value": value} for key, value in input_dict.items()]
+            return JsonResponse(output_list, safe=False)
+        elif data['axis'] == "H-Axis":
+            return JsonResponse([{"name": "H", "value": h}], safe=False)
+        elif data['axis'] == "V-Axis":
+            return JsonResponse([{"name": "V", "value": v}], safe=False)
+        elif data['axis'] == "A-Axis":
+            return JsonResponse([{"name": "A", "value": a}], safe=False)
+        else:
+            return JsonResponse({"Response": []}, status=404)
+
+    except Exception as e:
+        print(traceback.print_exc())
+        print(e)
+        return JsonResponse({"Response": "Data not Found"}, status=500)
         
 @csrf_exempt
 @require_http_methods(["POST"])
@@ -1005,7 +1023,7 @@ def start32BitRealTimeValue(request):
             return JsonResponse({"Response": "Data not Found"}, status=500)
 
 @csrf_exempt
-def realtime_value_v3(request):
+def realtimeValueV3(request):
     if request.method == 'POST':
         try:
             data = json.loads(request.body)
@@ -1088,10 +1106,14 @@ from pymongo import DESCENDING
 
 @csrf_exempt
 @require_http_methods(["POST"])
-def start_real_time_value_report_v3(request):
+def startRealTimeValueReportV3(request):
     try:
         data = json.loads(request.body)
+        machine_id = data.get("Machine_Name")
+        if not machine_id:
+            return JsonResponse({"error": "Missing Machine_Name"}, status=400)
 
+        db = client[settings.MONGODB_NAME]
         old = {
             "AccelerationEnvelope": "6",
             "Acceleration Envelope": "6",
@@ -1099,89 +1121,76 @@ def start_real_time_value_report_v3(request):
             "Velocity": "0",
             "Temperature": "8"
         }
-
-        machine_id = data.get("Machine_Name")
-        db = client[settings.MONGODB_NAME]
-
         defaultData = {
             "0": {"status": "normal", "value": 0},
             "2": {"status": "normal", "value": 0},
-            "6": {"status": "normal", "value": 0},
-            "file": True
+            "6": {"status": "normal", "value": 0}
         }
 
-        bearingLocationDatas = db["BearingLocation"].find({"machineId": ObjectId(machine_id)})
-        final_data = {"data": {}}
         iso_dict = isoStandardGetter(ObjectId(machine_id))
-
         start_date_time = int((datetime.now().astimezone(settings.GMT_TIMEZONE) - timedelta(days=1)).timestamp())
         end_date_time = int(datetime.now().astimezone(settings.GMT_TIMEZONE).timestamp())
 
-        for bearingLocationDatas in bearingLocationDatas:
-            file_name = f"RMS_{str(bearingLocationDatas['_id'])}.parquet"
+        final_data = {}
 
-            if 'bearingLocationType' not in bearingLocationDatas or bearingLocationDatas['bearingLocationType'] == "ONLINE":
+        # Fetch all bearing locations for this machine
+        for bearingLocation in db["BearingLocation"].find({"machineId": ObjectId(machine_id)}):
+            sensorName = bearingLocation["name"]
+            DATETIME = 0
+            H, V, A = {}, {}, {}
+
+            bearing_type = bearingLocation.get('bearingLocationType', "ONLINE")
+            file_name = f"RMS_{str(bearingLocation['_id'])}.parquet"
+
+            if bearing_type == "ONLINE":
                 try:
-                    H, V, A = {}, {}, {}
-                    DATETIME = 0
-
                     for axis in ['H', 'V', 'A']:
                         rms_data_cursor = db["LatestRmsData"].find(
-                            {"BearingLoactionId": ObjectId(bearingLocationDatas["_id"]), "axis": axis}
+                            {"BearingLoactionId": ObjectId(bearingLocation["_id"]), "axis": axis}
                         ).sort([("_id", DESCENDING)]).limit(1)
-
                         rms_data = list(rms_data_cursor)
                         if not rms_data:
                             continue
-
                         rms_data = rms_data[0]
                         DATETIME = rms_data['epochTime']
                         axis_data = rms_data.get('data', {})
-
                         for key, value in axis_data.items():
                             formatted_key = old.get(key)
                             if formatted_key:
+                                entry = {"value": value, "status": isoAlertGetter(iso_dict, value)}
                                 if axis == "H":
-                                    H[formatted_key] = {"value": value, "status": isoAlertGetter(iso_dict, value)}
+                                    H[formatted_key] = entry
                                 elif axis == "V":
-                                    V[formatted_key] = {"value": value, "status": isoAlertGetter(iso_dict, value)}
+                                    V[formatted_key] = entry
                                 elif axis == "A":
-                                    A[formatted_key] = {"value": value, "status": isoAlertGetter(iso_dict, value)}
-
+                                    A[formatted_key] = entry
                     if DATETIME > 10**10:
                         DATETIME = DATETIME // 1000
+                    final_data[sensorName] = {
+                        "H": H if H else defaultData,
+                        "V": V if V else defaultData,
+                        "A": A if A else defaultData,
+                        "sensorName": sensorName,
+                        "Date": datetime.utcfromtimestamp(int(DATETIME)).strftime("%a, %d %b %Y %H:%M:%S GMT") if DATETIME else "",
+                        "bearingLocationType": "ONLINE"
+                    }
+                except Exception:
+                    traceback.print_exc()
+                    continue
 
-                    if H or V or A:
-                        final_data["data"][bearingLocationDatas["name"]] = {
-                            "H": H,
-                            "V": V,
-                            "A": A,
-                            "sensorName": bearingLocationDatas["name"],
-                            "Date": datetime.utcfromtimestamp(int(DATETIME)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
-                            "bearingLocationType": "ONLINE"
-                        }
-
-                except FileNotFoundError:
-                    pass
-
-            elif bearingLocationDatas['bearingLocationType'] == "OFFLINE":
+            elif bearing_type == "OFFLINE":
                 try:
-                    start_date_time = int((datetime.now().astimezone(settings.GMT_TIMEZONE) - timedelta(days=365)).timestamp())
-
+                    offline_start = int((datetime.now().astimezone(settings.GMT_TIMEZONE) - timedelta(days=365)).timestamp())
                     if "Analytics_Types" not in data or data['Analytics_Types'] == "OM":
-                        latest_history = read_from_parquet(file_name, start_date_time, end_date_time, limit=100)
+                        latest_history = read_from_parquet(file_name, offline_start, end_date_time, limit=100)
                     else:
                         latest_history = read_from_new_parquet(
-                            file_name, data['Machine_Name'], start_date_time, end_date_time,
+                            file_name, data['Machine_Name'], offline_start, end_date_time,
                             limit=100, analyticsType=data['Analytics_Types']
                         )
-
                     if latest_history.empty:
                         continue
-
                     latest_history = latest_history.sort_values(by='timestamp')
-                    H, V, A = {}, {}, {}
-
                     for _, row in latest_history.iterrows():
                         DATETIME = row['timestamp']
                         data_row = json.loads(row['data'])
@@ -1196,24 +1205,21 @@ def start_real_time_value_report_v3(request):
                                         V[formatted_key] = entry
                                     elif axis == "A":
                                         A[formatted_key] = entry
-
                     if DATETIME > 10**10:
                         DATETIME = DATETIME // 1000
-
-                    final_data["data"][bearingLocationDatas["name"]] = {
+                    final_data[sensorName] = {
                         "H": H if H else defaultData,
                         "V": V if V else defaultData,
                         "A": A if A else defaultData,
-                        "sensorName": bearingLocationDatas["name"],
-                        "Date": datetime.utcfromtimestamp(int(DATETIME)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
+                        "sensorName": sensorName,
+                        "Date": datetime.utcfromtimestamp(int(DATETIME)).strftime("%a, %d %b %Y %H:%M:%S GMT") if DATETIME else "",
                         "bearingLocationType": "OFFLINE"
                     }
+                except Exception:
+                    traceback.print_exc()
+                    continue
 
-                except FileNotFoundError:
-                    pass
-
-        return JsonResponse(final_data["data"], safe=False)
-
+        return JsonResponse(final_data, safe=False)
     except Exception:
         traceback.print_exc()
         return JsonResponse({"Response": "Data not Found"}, status=500)
@@ -1229,7 +1235,7 @@ def return_data_found(data):
 
 @csrf_exempt
 @require_http_methods(["POST"])
-def start_hopnet_audio(request):
+def startHopnetAudio(request):
     try:
         data = json.loads(request.body)
         print("audio: ", data)
@@ -1308,7 +1314,7 @@ def start_hopnet_audio(request):
         return return_internal_server_error(str(e))
     
 @csrf_exempt
-def start_hopnet_timeseries(request):
+def startHopnetTimeseries(request):
     if request.method == 'POST':
         try:
             data = json.loads(request.body)
@@ -1406,7 +1412,7 @@ def start_hopnet_timeseries(request):
             return return_internal_server_error(str(e))
     
 @csrf_exempt
-def start_hopnet_fft(request):
+def startHopnetFFT(request):
     if request.method == 'POST':
         try:
             data = json.loads(request.body)
@@ -1485,7 +1491,7 @@ def start_hopnet_fft(request):
 
 @csrf_exempt
 @require_http_methods(["POST"])
-def parameter_trends_view(request):
+def parameterTrendsView(request):
     try:
         data = json.loads(request.body)
         print("ParameterTrends:", data)
@@ -1598,7 +1604,7 @@ def parameter_trends_view(request):
     
 @csrf_exempt
 @require_http_methods(["POST"])
-def hopnet_realtime_value_report(request):
+def hopnetRealtimeValueReport(request):
     try:
         data = json.loads(request.body)
         old = {
@@ -1709,7 +1715,7 @@ def hopnet_realtime_value_report(request):
 
 @csrf_exempt
 @require_http_methods(["GET"])
-def hopnet_machine_view(request):
+def hopnetMachineView(request):
     data = [
         {'id': '65967ec33fc203bd2bf2eb0e', 'name': 'Ball Mill 1'},
         {'id': '659688d43fc203bd2bf2eceb', 'name': 'Ball Mill 2'}
@@ -1718,7 +1724,7 @@ def hopnet_machine_view(request):
 
 @csrf_exempt
 @require_http_methods(["GET"])
-def hopnet_bearing_location_view(request):
+def hopnetBearingLocationView(request):
     sensor_list = [
         {"_id": "65967f553fc203bd2bf2eb38", "name": "MOTOR DE"},
         {"_id": "659682e33fc203bd2bf2eb5b", "name": "MOTOR NDE"},
@@ -1741,7 +1747,7 @@ def hopnet_bearing_location_view(request):
 
 @csrf_exempt
 @require_http_methods(["POST"])
-def get_data(request):
+def getData(request):
     try:
         axis_mapping = {
             "H-Axis": "H",
@@ -1875,7 +1881,7 @@ def get_data(request):
 
 @csrf_exempt
 @require_http_methods(["GET"])
-def get_old_data(request):
+def getOldData(request):
     db = client[settings.MONGODB_NAME]
     try:
         data = json.loads(request.body)
@@ -2003,7 +2009,7 @@ from django.http import JsonResponse, HttpResponseNotFound, HttpResponseServerEr
 
 @csrf_exempt
 @require_http_methods(["POST"])
-def delete_records_by_timestamp(request):
+def deleteRecordsByTimestamp(request):
     try:
         metaData = json.loads(request.body)
         file_name = metaData["file_name"]
@@ -2063,7 +2069,7 @@ update_fmax_noOfLine_Offline_map = {
 
 @csrf_exempt
 @require_http_methods(["GET"])
-def sensor_calibration(request, mac):
+def sensorCalibration(request, mac):
     key = b'abcdefghijklmnop'  # AES 128-bit key
     try:
         db = TestMongoclient['aamsTest']
@@ -2174,7 +2180,7 @@ def SensorCalibrationSerialNumber(request, serialNumber):
         return JsonResponse({"error": "An error occurred"}, status=500)
 
 @csrf_exempt
-def get_sensor_config(request):
+def getSensorConfig(request):
     if request.method == 'POST':
         try:
             data = json.loads(request.body)
@@ -2278,7 +2284,7 @@ def top10Fft(fft_array):
 
 @csrf_exempt
 @require_http_methods(["POST"])
-def start_top_10_fft(request):
+def startTop10fft(request):
     db = client[settings.MONGODB_NAME]
     try:
         data = json.loads(request.body)
@@ -2523,7 +2529,7 @@ def home(request):
 
 @csrf_exempt
 @require_http_methods(["POST"])
-def fft_high_resolution1_view(request):
+def fftHighResolution1View(request):
     data = json.loads(request.body)
     print("fft:", data)
 
@@ -2576,7 +2582,7 @@ def fft_high_resolution1_view(request):
         if data["Type"].lower() in ['velocity', 'acceleration']:
             axis_key = axis_mapping.get(data["Axis_Id"], "").lower()
 
-            floor_noise_percentage = (
+            floorNoisePercentage = (
                 bearingLocationDatas
                 .get(data["Type"].lower(), {})
                 .get('highResolutionFloorNoiseThresholdPercentage', {})
@@ -2701,8 +2707,7 @@ def fft_high_resolution1_view(request):
                                 pass
                                 # RespondData = highResolution.Velocity_Convert_HighResolution_online(File_Data, SR_VALUE, highResolutionNoOflines, highResolutionFmax, highpass_values[0], highpass_values[1], floorNoisePercentage)
                             else:
-                                pass
-                                # RespondData = velocityConvertHighResolution(File_Data, SR_VALUE, fullFileData[0]['NOS'], (highpass_values[0], highpass_values[1]), lowpass_values, floorNoisePercentage)
+                                RespondData = velocityConvertHighResolution(File_Data, SR_VALUE, fullFileData[0]['NOS'], (highpass_values[0], highpass_values[1]), lowpass_values, floorNoisePercentage)
 
                         elif data["Type"] == 'Acceleration':
                             if SR_VALUE == 3000:
@@ -2815,8 +2820,8 @@ def fft_high_resolution1_view(request):
                                     pass
                                     # respond_data = highResolution.Velocity_Convert_HighResolution_online(file_data, sr_value, high_resolution_no_of_lines, high_resolution_fmax, highpass_values[0], highpass_values[1], floorNoisePercentage)
                                 else:
-                                    pass
-                                    # respond_data = velocityConvertHighResolution(file_data, sr_value, full_file_data[0]['NOS'], (highpass_values[0], highpass_values[1]), lowpass_values, floorNoisePercentage)
+                                    # pass
+                                    respond_data = velocityConvertHighResolution(file_data, sr_value, full_file_data[0]['NOS'], (highpass_values[0], highpass_values[1]), lowpass_values, floorNoisePercentage)
 
                             elif request.GET["Type"] == 'Acceleration':
                                 if sr_value == 3000:
@@ -2843,7 +2848,7 @@ def fft_high_resolution1_view(request):
 
 @csrf_exempt
 @require_http_methods(["POST"])
-def set_calibration_value_in_file(request):
+def setCalibrationValueInFile(request):
     try:
         data = json.loads(request.body)
 
@@ -2928,7 +2933,6 @@ def startFftHighResolution(request):
                     All_History = read_from_new_parquet(data["Sensor_Name"]+".parquet", data['Machine_Name'], start_date_Time, end_date_Time, limit = 1 )
 
                 # All_History = read_from_parquet(data["Sensor_Name"]+".parquet", start_date_Time, end_date_Time, limit = 100)
-
 
                 for index, row in All_History.iterrows():
                     axis_Name = str(list(json.loads(row['data']).keys())[0]) + "-Axis"
@@ -3140,7 +3144,7 @@ def startFftHighResolution(request):
         return {"Response": "Data not Found"}, 500
 
 @csrf_exempt
-def delete_temp(request):
+def deleteTemp(request):
     if request.method == 'POST':
         try:
             meta_data = json.loads(request.body)

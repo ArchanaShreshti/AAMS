@@ -5,7 +5,7 @@ from Root.models import auto_admin_register, Machine
 @auto_admin_register()
 class Schedule(models.Model):
     id = ObjectIdAutoField(primary_key=True)
-    customer = models.ForeignKey('Root.Customer', on_delete=models.CASCADE, null=False)
+    customerId = models.ForeignKey('Root.Customer', on_delete=models.CASCADE, null=False)
     startDate = models.DateTimeField(null=False)
     endDate = models.DateTimeField(null=False)
     frequency = models.IntegerField(null=False)

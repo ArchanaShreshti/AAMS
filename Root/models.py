@@ -51,8 +51,8 @@ class Customer(models.Model):
     siteImage = models.URLField(max_length=500, blank=True, null=True)  # URL for site image
     latitude = models.CharField(max_length=100)  # Latitude as a string (may consider using FloatField)
     longitude = models.CharField(max_length=100)  # Longitude as a string (may consider using FloatField)
-    areas = models.ForeignKey(Area, on_delete=models.CASCADE, related_name='customer_areas', blank=True, null=True)  # Linking to Area
-    subareas = models.ForeignKey(Area, on_delete=models.CASCADE, related_name='customer_subareas', blank=True, null=True)  # Linking to SubArea
+    areaId = models.ForeignKey(Area, on_delete=models.CASCADE, related_name='customer_areas', blank=True, null=True)  # Linking to Area
+    subareaId = models.ForeignKey(Area, on_delete=models.CASCADE, related_name='customer_subareas', blank=True, null=True)  # Linking to SubArea
     
     createdAt = models.DateTimeField(auto_now_add=True)
     updatedAt = models.DateTimeField(auto_now=True)
@@ -401,6 +401,34 @@ class BearingLocation(models.Model):
     def save(self, *args, **kwargs):
         self.clean_jsonfields()
         super().save(*args, **kwargs)
+
+@auto_admin_register()
+class MachineHealth(models.Model):
+    id = ObjectIdAutoField(primary_key=True)
+    machineId = models.ForeignKey(Machine, on_delete=models.CASCADE, related_name='machine_health')
+    bearingLocationArr = models.JSONField(blank=True, null=True)  # Array of values stored as JSON
+    healthStatus = models.CharField(max_length=255, blank=True, null=True)
+
+    createdAt = models.DateTimeField(auto_now_add=True)
+    updatedAt = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Machine Health'
+        verbose_name_plural = 'Machine Healths'
+
+@auto_admin_register()
+class FaultType(models.Model):
+    id = ObjectIdAutoField(primary_key=True)
+    name = models.CharField(max_length=255, blank=False, null=False)
+    key = models.CharField(max_length=255, blank=False, null=False)
+    description = models.CharField(max_length=255, blank=False, null=False)
+
+    createdAt = models.DateTimeField(auto_now_add=True)
+    updatedAt = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Fault Type'
+        verbose_name_plural = 'Fault Types'
 
 @auto_admin_register()
 class Technology(models.Model):

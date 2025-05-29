@@ -1,30 +1,47 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from django.db.models import Count, Q, F  # Import Count from django.db.models
-from Root.models import Customer, Machine, Alert, Status
-from Schedules.models import ScheduleTask
-from datetime import datetime, time
-from rest_framework.permissions import AllowAny
+from Root.models import Customer, Machine, Status
+from datetime import datetime
 from django.utils.dateparse import parse_date
-from bson import ObjectId
-from django.http import JsonResponse
+from bson import ObjectId, errors
 from django.utils.timezone import make_aware
-import logging
+from collections import defaultdict
 
 class MachineCountView(APIView):
     def get(self, request):
+        customer_id = request.GET.get('customerId')
         result = {}
 
-        for status in Status.objects.all():
-            count = Machine.objects.filter(statusId_id=status.id).count()
-            result[status.key] = {
-                "id": str(status.id),
-                "name": status.name,
-                "key": status.key,
-                "description": status.description,
-                "machineCount": count
-            }
+        # Validate and convert customerId if provided
+        if customer_id:
+            try:
+                customer_obj_id = ObjectId(customer_id)
+            except errors.InvalidId:
+                return Response({"error": "Invalid customerId"}, status=400)
+
+            statuses = Status.objects.all()
+            for status in statuses:
+                count = Machine.objects.filter(statusId_id=status.id, customerId_id=customer_obj_id).count()
+                result[status.key] = {
+                    "id": str(status.id),
+                    "name": status.name,
+                    "key": status.key,
+                    "description": status.description,
+                    "machineCount": count
+                }
+        else:
+            # No customerId, return overall counts
+            statuses = Status.objects.all()
+            for status in statuses:
+                count = Machine.objects.filter(statusId_id=status.id).count()
+                result[status.key] = {
+                    "id": str(status.id),
+                    "name": status.name,
+                    "key": status.key,
+                    "description": status.description,
+                    "machineCount": count
+                }
 
         return Response(result)
 
@@ -64,6 +81,11 @@ class DashboardStatsView(APIView):
         customer_data = []
 
         for customer_id, machine_list in customer_machines.items():
+            c = customers.get(customer_id)
+            if c is None:
+                # Skip this customer or handle the missing case gracefully
+                continue
+
             online, offline, hybrid = [], [], []
 
             for m in machine_list:
@@ -77,7 +99,6 @@ class DashboardStatsView(APIView):
             def count_by_status(machines, status_set):
                 return sum(1 for m in machines if m["statusId"] in status_set)
 
-            c = customers[customer_id]
             data = {
                 "id": str(c.id),
                 "name": c.name,
@@ -148,16 +169,46 @@ class DashboardStatsView(APIView):
 
 class CustomCustomersView(APIView):
     def get(self, request):
+        # Step 1: Fetch all necessary machines in a single query
+        machines = Machine.objects.select_related('customerId', 'statusId') \
+            .values('customerId', 'machineType', 'statusId__name')
+
+        # Step 2: Aggregate counts by customer
+        customer_stats = defaultdict(lambda: {
+            'online': 0,
+            'hybrid': 0,
+            'offline': 0,
+            'alert': 0,
+            'unacceptable': 0
+        })
+
+        for machine in machines:
+            cid = machine['customerId']
+            mtype = machine['machineType'].lower() if machine['machineType'] else ''
+            status_name = machine['statusId__name']
+
+            if mtype == 'online':
+                customer_stats[cid]['online'] += 1
+            elif mtype == 'hybrid':
+                customer_stats[cid]['hybrid'] += 1
+            elif mtype == 'offline':
+                customer_stats[cid]['offline'] += 1
+
+            if status_name == 'Alert':
+                customer_stats[cid]['alert'] += 1
+            elif status_name == 'Unacceptable':
+                customer_stats[cid]['unacceptable'] += 1
+
+        # Step 3: Fetch all customers in one go
+        customers = Customer.objects.all().select_related('areaId', 'subareaId')
         customers_data = []
-        customers = Customer.objects.all()
 
         for customer in customers:
-            online_count = Machine.objects.filter(customerId=customer.id, machineType__iexact='Online').count()
-            hybrid_count = Machine.objects.filter(customerId=customer.id, machineType__iexact='Hybrid').count()
-            offline_count = Machine.objects.filter(customerId=customer.id, machineType__iexact='Offline').count()
-            unacceptable_count = Machine.objects.filter(customerId=customer.id, statusId__name='Unacceptable').count()
-            alert_count = Machine.objects.filter(customerId=customer.id, statusId__name='Alert').count()
-            total_count = online_count + hybrid_count + offline_count
+            stats = customer_stats.get(customer.id, {
+                'online': 0, 'hybrid': 0, 'offline': 0,
+                'alert': 0, 'unacceptable': 0
+            })
+            total = stats['online'] + stats['hybrid'] + stats['offline']
 
             customer_info = {
                 'id': str(customer.id),
@@ -168,15 +219,21 @@ class CustomCustomersView(APIView):
                 'latitude': customer.latitude,
                 'longitude': customer.longitude,
                 'updatedAt': customer.updatedAt.isoformat(),
-                'subAreas': {'id': str(customer.subareas.id), 'name': customer.subareas.name} if customer.subareas else None,
-                'areas': {'id': str(customer.areas.id), 'name': customer.areas.name} if customer.areas else None,
+                'subAreas': {
+                    'id': str(customer.subareaId.id),
+                    'name': customer.subareaId.name
+                } if getattr(customer, 'subareas', None) else None,
+                'areas': {
+                    'id': str(customer.areaId.id),
+                    'name': customer.areaId.name
+                } if getattr(customer, 'areas', None) else None,
                 'latestUpdateTime': datetime.now().isoformat(),
-                'onlinecount': online_count,
-                'hybridcount': hybrid_count,
-                'offlinecount': offline_count,
-                'alertCount': alert_count,
-                'unacceptableCount': unacceptable_count,
-                'totalCount': total_count,
+                'onlinecount': stats['online'],
+                'hybridcount': stats['hybrid'],
+                'offlinecount': stats['offline'],
+                'alertCount': stats['alert'],
+                'unacceptableCount': stats['unacceptable'],
+                'totalCount': total,
             }
             customers_data.append(customer_info)
 

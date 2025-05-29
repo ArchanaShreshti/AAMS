@@ -3,7 +3,7 @@ from .views import *
 from Feedback.views import *
 from rest_framework.routers import DefaultRouter
 from Root.views import *
-# from screen_views.views.machine_dashboard import *
+from Vibration.screenAPIs.machine_dashboard import *
 
 router = DefaultRouter()
 models = apps.get_models()
@@ -35,9 +35,9 @@ urlpatterns = [
 
     path('customers/', include([
         path('all', CustomCustomersView.as_view(), name='customers_list'),                                             # Admin Page -3
-        path('<str:customer_id>/dashboard/stats', CustomerDashboardStatsView.as_view(), name='customers_dashboard-stats'), # Dashboard -1
+        path('<str:customerId>/dashboard/stats', CustomerDashboardStatsView.as_view(), name='customers_dashboard-stats'), # Dashboard -1
         path('machines/all', MachineListView.as_view(), name='customer_machine_all'),                   # Machine-view - 9, 6
-        path('<str:customer_id>/areas/all', CustomerAreasView.as_view({'get': 'list'})),                                   # Reports - Vibration-7
+        path('<str:customerId>/areas/all', CustomerAreasView.as_view({'get': 'list'})),                                   # Reports - Vibration-7
         path('areas/subAreas/all', GetTotalAreasView.as_view(), name='AreaSubArealist'),                                  #DashboardSettings-2
         path('areas/<str:customer_id>/subAreas/all', AreaListView.as_view(), name='subArealist'),                        # Reports - Vibration-8                                            
         path('areas/all', GetTotalAreasView.as_view(), name='Arealist'),
@@ -46,6 +46,9 @@ urlpatterns = [
         path('machines/<str:machine_id>/bearing-location/all', BearingLocationByMachineView.as_view(), 
              name='machine_bearing_locations'),                                                                          # Machine-view - 2
         path('machines/<str:machine_id>', MachineDetailView.as_view(), name='machine_detail'),
+        path('<str:customerId>/dashboard/machine-details/', MachineDetailsView.as_view({'get': 'list'})),
+        path('<str:customerId>/dashboard/tree-map', DashboardTreeMapView.as_view(), name='customer-tree-map'),
+
     ])),
     
     path('dailyTaskSchedule/', include([
@@ -70,36 +73,11 @@ urlpatterns = [
     path('iso-standards/all', AlertLimitsViewSet.as_view({'get': 'list'}), name='iso-standards-all'),
     path('iso-standards/', AlertLimitsViewSet.as_view({'get': 'list'}), name='iso-standards-all'),     
     path('feedback/all/unique', FeedbackViewSet.as_view({'get': 'list'}), name='feedback-all'),
-    # path('test', home),
-
-    # path('fft/setValue', set_calibration_value_in_file),
-    # path('audio', start_audio), 
-    # path('timeseries', start_timeseries),
-    # path('fft1', start_fft1),
-    # path('fft', fft_view),
-    # path('V2/ParameterTrends', start_parameter_trends),
-    # path('32Bit/fft', start32BitRealTimefft),
-    # path('32Bit/RealTimeValue', start32BitRealTimeValue),  
-    # path('v3/RealTimeValue', realtime_value_v3),
-    # path('v3/RealTimeValue/report', start_real_time_value_report_v3),
-    # path('hopnet/audio', start_hopnet_audio),
-    # path('hopnet/timeseries', start_hopnet_timeseries),
-    # path('hopnet/fft', start_hopnet_fft),
-    # path('hopnet/ParameterTrends', parameter_trends_view),
-    # path('hopnet/RealTimeValue/report', hopnet_realtime_value_report),
-    # path('hopnet/machine', hopnet_machine_view),
-    # path('hopnet/bearingLocation', hopnet_bearing_location_view),
-    # path('Data', get_data),
-    # path('OldData', get_old_data),
-    # path('Delete/value', delete_records_by_timestamp),
-    # path('calibration/data/<MAC>', sensor_calibration),
-    # path('calibration/data/serialNumber/<serialNumber>', SensorCalibrationSerialNumber),
-    # path('sensorConfig', get_sensor_config),
-    # path('calibration/token/<MAC>', SensorToken),
-    # path('fft/peaks', start_top_10_fft),
-    # path('fft/highResolution1', fft_high_resolution1_view),
-    # path('fft/setValue', set_calibration_value_in_file),
-    # path('fft/highResolution', startFftHighResolution),
-    # path('Delete', delete_temp),
+    path('scheduleTask/priority/count', scheduleTaskPriorityCount, name='schedule-task-priority-count'),
+    path('scheduleTask/priority', scheduleTaskByPriority, name='schedule-task-by-priority'),
+    path('faultType/all', FaultTypeView.as_view(), name='fault-type'),
+    path('machine-report/', FFTImageReportView.as_view(), name='machine-report'),
+    
+    path('test', home)
 ]
                                            

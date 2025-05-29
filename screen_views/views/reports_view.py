@@ -8,6 +8,9 @@ from rest_framework import viewsets
 from bson import ObjectId
 from pymongo import MongoClient
 from django.conf import settings
+from django.http import JsonResponse
+from django.views import View
+from Report.models import ImageReport, MachineReport
 
 class ScheduleStatsView(viewsets.ReadOnlyModelViewSet):
     def get(self, request):
@@ -27,27 +30,22 @@ class ScheduleStatsView(viewsets.ReadOnlyModelViewSet):
     
 class CustomerAreasView(viewsets.ReadOnlyModelViewSet):
     serializer_class = CustomAreaSerializer
+    pagination_class=None
 
     def get_queryset(self):
-        customer_id = self.kwargs.get('customer_id')  # Access customer_id from the URL
+        customer_id = self.kwargs.get('customerId')  # Gets it as string
 
         if customer_id:
             try:
-                # Convert the string customer_id to ObjectId for MongoDB compatibility
-                customer_object_id = ObjectId(customer_id)
-
-                # Fetch areas related to the customer using the ObjectId
-                queryset = Area.objects.filter(customerId_id=customer_object_id)  # Use customerId_id in filter
-
+                # Convert to int if your Customer ID is an integer field
+                customer_id = int(customer_id)
+                queryset = Area.objects.filter(customerId_id=customer_id)
                 return queryset
-            except Customer.DoesNotExist:
-                return Area.objects.none()  # Return empty queryset if customer is not found
-            except Exception as e:
-                # Handle invalid ObjectId or any other exception
+            except (Customer.DoesNotExist, ValueError, TypeError):
                 return Area.objects.none()
-
         else:
-            return Area.objects.all()  # Return all areas if no customer_id is passed
+            return Area.objects.all()
+
     
 class CustomerSubAreaView(viewsets.ReadOnlyModelViewSet):
     serializer_class = CustomSubAreaSerializer
@@ -58,25 +56,35 @@ class CustomerSubAreaView(viewsets.ReadOnlyModelViewSet):
             return Area.objects.filter(customerId=customer_id).exclude(parentId=None)
         return Area.objects.exclude(parentId=None)
 
+from rest_framework import status
+
 class TechnologyDetailsView(APIView):
     def get(self, request):
-        client = MongoClient(settings.MONGODB_URI)  # Use MONGODB_URI for MongoClient
-        db = client[settings.MONGODB_NAME]  # Use the correct database
+        try:
+            client = MongoClient(settings.MONGODB_URI)
+            db = client[settings.MONGODB_NAME]
+            collection = db["Root_technology"]
 
-        collection = db["Root_technology"]  # Replace with your actual collection name
-        modules = list(collection.find({}, {
-            "_id": 1,
-            "name": 1,
-            "key": 1,
-            "status": 1
-        }))
+            modules = list(collection.find({}, {
+                "_id": 1,
+                "name": 1,
+                "key": 1,
+                "status": 1
+            }))
 
-        # Convert ObjectIds to strings
-        for module in modules:
-            module["id"] = str(module["_id"])
-            del module["_id"]
+            for module in modules:
+                module["id"] = str(module["_id"])
+                del module["_id"]
+                if "status" not in module or not isinstance(module["status"], dict):
+                    module["status"] = {}
 
-        return Response(modules)
+            return Response(modules, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to fetch technology details: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 class SafetyListView(APIView):
     def get(self, request):
@@ -100,3 +108,31 @@ class SafetyListView(APIView):
             del alert["_id"]
 
         return Response(alerts)
+    
+class FFTImageReportView(View):
+    def get(self, request):
+        machine_id = request.GET.get("machineId")
+        if not machine_id:
+            return JsonResponse({"error": "machineId is required"}, status=400)
+
+        machine_reports = MachineReport.objects.filter(machineId=machine_id)
+
+        if not machine_reports.exists():
+            return JsonResponse({"FFT": []}, status=200)
+
+        image_reports = ImageReport.objects.filter(machineReportId__in=machine_reports)
+
+        grouped = {}
+        for report in image_reports:
+            item = {
+                "_id": str(report.id),
+                "machineReportId": str(report.machineReportId_id),
+                "plotType": report.plotType,
+                "imageURL": report.imageURL,
+                "imageDescription": report.imageDescription,
+                "createdAt": report.createdAt.isoformat(),
+                "updatedAt": report.updatedAt.isoformat(),
+            }
+            grouped.setdefault(report.plotType, []).append(item)
+
+        return JsonResponse(grouped, status=200)

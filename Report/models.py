@@ -5,8 +5,8 @@ from Root.models import auto_admin_register
 @auto_admin_register()
 class MachineReport(models.Model):
     id = ObjectIdAutoField(primary_key=True)
-    machine = models.ForeignKey('Root.Machine', on_delete=models.CASCADE, null=False)
-    sensor = models.ForeignKey('Vibration.Sensor', on_delete=models.CASCADE, null=False)
+    machineId = models.ForeignKey('Root.Machine', on_delete=models.CASCADE, null=False)
+    sensorId = models.ForeignKey('Vibration.Sensor', on_delete=models.CASCADE, null=False)
 
     createdAt = models.DateTimeField(auto_now_add=True)
     updatedAt = models.DateTimeField(auto_now=True)
@@ -47,7 +47,7 @@ class OilAnalysisReport(models.Model):
     equipmentId = models.ForeignKey('OilAnalysis.OilAnalysis', on_delete=models.CASCADE, db_index=True, blank=False, null=False)
     recievedDate = models.DateField(blank=True, null=True)
     reportDate = models.DateField(blank=True, null=True)
-    condition = models.ForeignKey('Root.Status', on_delete=models.CASCADE, blank=True, null=True)
+    condition = models.ForeignKey('Root.Status', on_delete=models.CASCADE, blank=True, null=True, name="statusId")
     sampleId = models.CharField(max_length=255, blank=False, null=False)
     oaKinematicViscosity40C = models.CharField(max_length=255, blank=True, null=True)
     OaMoistureContent = models.CharField(max_length=255, blank=True, null=True)

@@ -8,10 +8,7 @@ from rest_framework.views import APIView
 from bson import ObjectId
 from django.http import JsonResponse
 from pymongo import MongoClient
-from screen_views.views.dashboard_views import NoMetaPagination  # your custom paginator
 from django.shortcuts import get_object_or_404
-from django.db.models import Prefetch
-from collections import Counter
 
 class AreaListView(APIView):
     def get(self, request):
@@ -165,28 +162,160 @@ class CustomTechnologyView(viewsets.ReadOnlyModelViewSet):
     serializer_class = CustomTechnologySerializer
     pagination_class = None
 
+""" class CustomSensorView(APIView):
+    def get(self, request):
+        sensor_type = request.query_params.get('sensorsType', '').lower()
+        if sensor_type == 'multichannel':
+            model = MultiChannelSensor
+        elif sensor_type == 'mems':
+            model = Sensor
+        else:
+            return Response({'error': 'Invalid sensorType'}, status=status.HTTP_400_BAD_REQUEST)
+
+        queryset = model.objects.all()
+
+        data = []
+        for obj in queryset:
+            base_data = {
+                'id': str(obj.id),
+                'name': obj.name,
+                'gRange': obj.gRange,
+                'numberOfSamples': obj.numberOfSamples,
+                'address': getattr(obj, 'address', None),
+                'ssid': getattr(obj, 'ssid', None),
+                'password': getattr(obj, 'password', None),
+                'reportingFrequency': getattr(obj, 'reportingFrequency', None),
+                'samplingFrequency': getattr(obj, 'samplingFrequency', None),
+                # Machine and related fields
+                'machineId': str(obj.machineId.id) if getattr(obj, 'machineId', None) else None,
+                'machineName': getattr(obj.machineId, 'name', None) if getattr(obj, 'machineId', None) else None,
+                'areaId': str(obj.machineId.areaId.id) if getattr(obj, 'machineId', None) and getattr(obj.machineId, 'areaId', None) else None,
+                'areaName': getattr(obj.machineId.areaId, 'name', None) if getattr(obj, 'machineId', None) and getattr(obj.machineId, 'areaId', None) else None,
+                'subAreaId': str(obj.machineId.subAreaId.id) if getattr(obj, 'machineId', None) and getattr(obj.machineId, 'subAreaId', None) else None,
+                'subareaName': getattr(obj.machineId.subAreaId, 'name', None) if getattr(obj, 'machineId', None) and getattr(obj.machineId, 'subAreaId', None) else None,
+                'customerId': str(obj.customerId.id) if getattr(obj.customerId, None) else None,
+                'customerName': getattr(obj.customerId, 'name', None) if getattr(obj, 'customerId', None) else None,
+            }
+            # For MEMS sensors, add bearing location fields
+            if sensor_type == 'mems':
+                base_data['bearingLocationId'] = (
+                    str(obj.bearingLocationId.id) if hasattr(obj.bearingLocationId, 'id') else str(obj.bearingLocationId)
+                ) if getattr(obj, 'bearingLocationId', None) else None
+                base_data['bearingLocationName'] = getattr(obj.bearingLocationId, 'name', None) if getattr(obj, 'bearingLocationId', None) else None
+
+            data.append(base_data)
+
+        return Response(data, status=status.HTTP_200_OK) """
+
 class CustomSensorView(APIView):
     def get(self, request):
-        sensors_type = request.query_params.get('sensorsType', '').lower()
+        sensor_type = request.query_params.get('sensorsType', '').lower()
+        client = MongoClient(settings.MONGODB_URI)
+        db = client[settings.MONGODB_NAME]
 
-        if sensors_type == 'mems':
-            queryset = Sensor.objects.all()
-            serializer = CustomSensorSerializer(queryset, many=True)
-            return Response(serializer.data, status=status.HTTP_200_OK)
-
-        elif sensors_type == 'multichannel':
-            queryset = MultiChannelSensor.objects.all()
-            serializer = CustomMultiChannelSensorSerializer(queryset, many=True)
-            return Response(serializer.data, status=status.HTTP_200_OK)
-
+        if sensor_type == 'multichannel':
+            collection = db['Vibration_multichannelsensor']
+        elif sensor_type == 'mems':
+            collection = db['Vibration_sensor']
         else:
-            mems = Sensor.objects.all()
-            multichannel = MultiChannelSensor.objects.all()
+            return Response({'error': 'Invalid sensorType'}, status=400)
 
-            return Response({
-                "mems": CustomSensorSerializer(mems, many=True).data,
-                "multichannel": CustomMultiChannelSensorSerializer(multichannel, many=True).data
-            }, status=status.HTTP_200_OK)
+        pipeline = [
+            # Lookup customer
+            {
+                "$lookup": {
+                    "from": "Root_customer",
+                    "localField": "customerId",
+                    "foreignField": "_id",
+                    "as": "customer"
+                }
+            },
+            {"$unwind": {"path": "$customer", "preserveNullAndEmptyArrays": True}},
+
+            # Lookup area from customer.areaId
+            {
+                "$lookup": {
+                    "from": "Root_area",
+                    "localField": "customer.areaId",
+                    "foreignField": "_id",
+                    "as": "area"
+                }
+            },
+            {"$unwind": {"path": "$area", "preserveNullAndEmptyArrays": True}},
+
+            # Lookup parent area from area.parentId (subarea)
+            {
+                "$lookup": {
+                    "from": "Root_area",
+                    "localField": "area.parentId",
+                    "foreignField": "_id",
+                    "as": "parent_area"
+                }
+            },
+            {"$unwind": {"path": "$parent_area", "preserveNullAndEmptyArrays": True}},
+
+            # Lookup bearing location
+            {
+                "$lookup": {
+                    "from": "Root_bearinglocation",
+                    "localField": "bearingLocationId",
+                    "foreignField": "_id",
+                    "as": "bearing_location"
+                }
+            },
+            {"$unwind": {"path": "$bearing_location", "preserveNullAndEmptyArrays": True}},
+
+            # Project all needed fields
+            {
+                "$project": {
+                    "name": 1,
+                    "gRange": 1,
+                    "numberOfSamples": 1,
+                    "address": 1,
+                    "ssid": 1,
+                    "password": 1,
+                    "reportingFrequency": 1,
+                    "samplingFrequency": 1,
+                    "machineId": 1,
+                    "customerId": 1,
+                    "customerName": "$customer.name",
+                    "areaId": "$customer.areaId",
+                    "areaName": "$area.name",
+                    "subAreaId": "$area.parentId",
+                    "subAreaName": "$parent_area.name",
+                    "bearingLocationId": 1,
+                    "bearingLocationName": "$bearing_location.name",
+                }
+            }
+        ]
+
+        cursor = collection.aggregate(pipeline)
+        data = []
+        for doc in cursor:
+            item = {
+                "id": str(doc.get("_id")),
+                "name": doc.get("name"),
+                "gRange": doc.get("gRange"),
+                "numberOfSamples": doc.get("numberOfSamples"),
+                "address": doc.get("address"),
+                "ssid": doc.get("ssid"),
+                "password": doc.get("password"),
+                "reportingFrequency": doc.get("reportingFrequency"),
+                "samplingFrequency": doc.get("samplingFrequency"),
+                "machineId": str(doc.get("machineId")) if doc.get("machineId") else None,
+                "customerId": str(doc.get("customerId")) if doc.get("customerId") else None,
+                "customerName": doc.get("customerName"),
+                "areaId": str(doc.get("areaId")) if doc.get("areaId") else None,
+                "areaName": doc.get("areaName"),
+                "subAreaId": str(doc.get("subAreaId")) if doc.get("subAreaId") else None,
+                "subAreaName": doc.get("subAreaName"),
+                "bearingLocationId": str(doc.get("bearingLocationId")) if doc.get("bearingLocationId") else None,
+                "bearingLocationName": doc.get("bearingLocationName"),
+            }
+            data.append(item)
+
+        return Response(data)
+
 
 class CustomUserViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = User.objects.all().select_related('customerId')
@@ -214,7 +343,7 @@ class MachineListView(APIView):
         # Lookup for technology details
         {
             '$lookup': {
-                'from': 'technology',  # Assuming 'technology' is the collection name
+                'from': 'technology',  
                 'localField': 'technologyId',
                 'foreignField': '_id',
                 'as': 'technology'
@@ -223,7 +352,7 @@ class MachineListView(APIView):
         # Lookup for status details
         {
             '$lookup': {
-                'from': 'status',  # Assuming 'status' is the collection name
+                'from': 'status',  
                 'localField': 'statusId',
                 'foreignField': '_id',
                 'as': 'status'
@@ -232,7 +361,7 @@ class MachineListView(APIView):
         # Lookup for customer details
         {
             '$lookup': {
-                'from': 'customer',  # Assuming 'customer' is the collection name
+                'from': 'customer',  
                 'localField': 'customerId',
                 'foreignField': '_id',
                 'as': 'customer'
@@ -241,7 +370,7 @@ class MachineListView(APIView):
         # Lookup for area details
         {
             '$lookup': {
-                'from': 'area',  # Assuming 'area' is the collection name
+                'from': 'area',  
                 'localField': 'areaId',
                 'foreignField': '_id',
                 'as': 'area'
@@ -250,10 +379,23 @@ class MachineListView(APIView):
         # Lookup for subarea details
         {
             '$lookup': {
-                'from': 'subarea',  # Assuming 'subarea' is the collection name
+                'from': 'area',  
                 'localField': 'subAreaId',
-                'foreignField': '_id',
+                'foreignField': 'parentAreaId',
                 'as': 'subarea'
+            }
+        },
+        {
+            "$lookup": {
+                "from": "sensor",          
+                "localField": "_id",                  
+                "foreignField": "machineId",          
+                "as": "sensors"
+            }
+        },
+        {
+            "$addFields": {
+                "noOfSensors": { "$size": { "$ifNull": ["$sensors", []] } }
             }
         },
         # Projecting the required fields
@@ -265,11 +407,12 @@ class MachineListView(APIView):
                 'description': 1,
                 'image': 1,
                 'location': 1,
-                'technology': { '$arrayElemAt': ['$technology', 0] },  # Assuming the lookup returns an array
-                'status': { '$arrayElemAt': ['$status', 0] },  # Assuming the lookup returns an array
-                'customer': { '$arrayElemAt': ['$customer', 0] },  # Assuming the lookup returns an array
-                'area': { '$arrayElemAt': ['$area', 0] },  # Assuming the lookup returns an array
-                'subarea': { '$arrayElemAt': ['$subarea', 0] },  # Assuming the lookup returns an array
+                'technology': { '$arrayElemAt': ['$technology', 0] },  
+                'technologyName': { '$arrayElemAt': [ '$technology.name', 0 ] },
+                'status': { '$arrayElemAt': ['$status', 0] },  
+                'customer': { '$arrayElemAt': ['$customer', 0] },  
+                'area': { '$arrayElemAt': ['$area', 0] },  
+                'subarea': { '$arrayElemAt': ['$subarea', 0] },  
                 'rpm': 1,
                 'preventiveCheckList': 1,
                 'preventiveCheckData': 1,
@@ -283,12 +426,10 @@ class MachineListView(APIView):
                 'qrCode': 1,
                 'dataUpdatedTime': 1,
                 'email': 1,
-                'noOfSensors': { '$size': { '$ifNull': ['$sensors', []] } }  # Calculate the number of related sensors
+                "noOfSensors": 1,
             }
         }
     ]
-
-
 
         # Run the aggregation pipeline to get all machines and related sensors count
         machines = list(db['Root_machine'].aggregate(pipeline))
@@ -311,3 +452,22 @@ class MachineListView(APIView):
             machine['alertLimitsId'] = str(machine.get('alertLimitsId', '')) if machine.get('alertLimitsId') else None
 
         return machines
+    
+class FaultTypeView(APIView):
+    def get(self, request):
+        faultType = FaultType.objects.all()  # Get all fault types
+        data = []
+
+        for f in faultType:
+            # Prepare the response format for each fault type
+            fault_type_data = {
+                'name': f.name,
+                'key': f.key,
+                'description': f.description or "",  
+                'id': str(f.id),  
+                'createdAt': f.createdAt,
+                'updatedAt': f.updatedAt,
+            }
+            data.append(fault_type_data)
+
+        return Response(data, status=status.HTTP_200_OK)

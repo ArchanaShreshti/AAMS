@@ -7,7 +7,7 @@ class Feedback(models.Model):
     id=ObjectIdAutoField(primary_key=True)
     feedbackDescription = models.TextField()
     priority=models.IntegerField()
-    parentFeedback = models.ForeignKey('self', on_delete=models.CASCADE, null=True, blank=True)
+    parentFeedbackId = models.ForeignKey('self', on_delete=models.CASCADE, null=True, blank=True)
     
     createdAt = models.DateTimeField(auto_now_add=True)
     updatedAt = models.DateTimeField(auto_now=True)

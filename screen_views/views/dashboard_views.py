@@ -1,38 +1,39 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework import status  
+from rest_framework import status, viewsets
 from bson import ObjectId
-from Root.models import Customer, Status, Area, Technology, Machine
+from Root.models import Customer, Status, Area, Technology, Machine, MachineHealth
 from Report.models import MachineReport
 from rest_framework.decorators import action
-from rest_framework import viewsets
 from django.views import View
-import json
-from django.http import HttpResponse
+from django.db.models import Prefetch
 from django.http import JsonResponse
 from Schedules.models import ScheduleTask, Schedule
 from screen_views.serializers import *
 from bson.errors import InvalidId
+from rest_framework.pagination import PageNumberPagination
+from django.db.models import Count, Prefetch
 from django.db import connection
 
 class CustomerDashboardStatsView(APIView):
     def get(self, request, *args, **kwargs):
         try:
             # Extract customerId from the path
-            customerId_id = kwargs.get("customerId_id")
+            customerId = kwargs.get("customerId")
             area_id = request.query_params.get("areaId")
             sub_area_id = request.query_params.get("subAreaId")
 
             machine_filter = {}
             customer_filter = {}
 
-            if customerId_id:
-                try:
-                    customer_id = ObjectId(customerId_id)
-                    machine_filter["customerId"] = customer_id
-                    customer_filter["id"] = customer_id
-                except InvalidId:
-                    return Response({"error": "Invalid customer ID"}, status=status.HTTP_400_BAD_REQUEST)
+            if not customerId or customerId in ["undefined", "null", "None"]:
+                return Response({"error": "Missing or invalid customer ID"}, status=status.HTTP_400_BAD_REQUEST)
+            try:
+                customerId = ObjectId(customerId)
+                machine_filter["customerId"] = customerId
+                customer_filter["id"] = customerId
+            except InvalidId:
+                return Response({"error": "Invalid customer ID"}, status=status.HTTP_400_BAD_REQUEST)
                 
             if area_id:
                 try:
@@ -181,8 +182,21 @@ class TechnologyDetailsView(APIView):
     
 class StatusListView(APIView):
     def get(self, request):
-        # Query all Status objects
-        statuses = Status.objects.all()
+        customer_id_str = request.query_params.get("customerId")
+
+        # Validate customerId if provided
+        if customer_id_str:
+            try:
+                customer_id = ObjectId(customer_id_str)
+            except InvalidId:
+                return Response({"error": "Invalid customerId"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Filter Status objects related to the customer
+            # Assuming Status model has a customerId field or relation
+            statuses = Status.objects.filter(customerId=customer_id)
+        else:
+            # If no customerId provided, return all statuses or empty list as per your logic
+            statuses = Status.objects.all()
 
         # Prepare the response data
         status_data = []
@@ -197,10 +211,12 @@ class StatusListView(APIView):
                 "id": str(status_obj.id)  # Assuming the ID is a string or ObjectId
             })
         
-        # Return the response as JSON
         return Response(status_data, status=status.HTTP_200_OK)
 
 from rest_framework import pagination
+from collections import defaultdict
+from django.utils.dateparse import parse_datetime, parse_date
+import time
 
 class NoMetaPagination(pagination.PageNumberPagination):
     page_size = 15
@@ -208,179 +224,303 @@ class NoMetaPagination(pagination.PageNumberPagination):
     max_page_size = 100
 
     def get_paginated_response(self, data):
-        # Return only the data (list of results) without pagination metadata
         return Response(data)
 
 class MachineDetailsView(viewsets.ModelViewSet):
     serializer_class = CustomMachineSerializer
-    pagination_class = NoMetaPagination  # Use the custom pagination
+    pagination_class = NoMetaPagination
 
     def get_queryset(self):
+        # Apply base filters
+        customer_id = self.kwargs.get('customerId') or self.request.query_params.get('customerId')
         status_id = self.request.query_params.get('statusId')
         area_id = self.request.query_params.get('areaId')
         sub_area_id = self.request.query_params.get('subAreaId')
         technology_id = self.request.query_params.get('technologyId')
+        date_str = self.request.query_params.get('dataUpdatedTime')
 
-        queryset = Machine.objects.select_related(
-            'statusId', 'areaId', 'subAreaId', 'technologyId'
-        ).filter(
-            technologyId__name__iexact="Vibration"  # ✅ Only VIBRATION machines
+        queryset = Machine.objects.only(
+            'id', 'name', 'image', 'customerId', 'statusId', 'areaId',
+            'subAreaId', 'technologyId', 'description', 'createdAt',
+            'updatedAt', 'dataUpdatedTime', 'machineType',
+            'observations', 'recommendations'
         )
 
-        if status_id:
-            queryset = queryset.filter(statusId__id=status_id)
-        if area_id:
-            queryset = queryset.filter(areaId__id=area_id)
-        if sub_area_id:
-            queryset = queryset.filter(subAreaId__id=sub_area_id)
-        if technology_id:
-            queryset = queryset.filter(technologyId__id=technology_id)
+        try:
+            if customer_id:
+                queryset = queryset.filter(customerId=ObjectId(customer_id))
+            if status_id:
+                queryset = queryset.filter(statusId=ObjectId(status_id))
+            if area_id:
+                queryset = queryset.filter(areaId=ObjectId(area_id))
+            if sub_area_id:
+                queryset = queryset.filter(subAreaId=ObjectId(sub_area_id))
+            if technology_id:
+                queryset = queryset.filter(technologyId=ObjectId(technology_id))
+        except InvalidId as e:
+            print("ERROR: InvalidId exception caught:", e)
+            return Machine.objects.none()
+
+        if date_str:
+            if 'T' in date_str:
+                dt = parse_datetime(date_str)
+                date_only = dt.date() if dt else None
+            else:
+                date_only = parse_date(date_str)
+            if date_only:
+                queryset = queryset.filter(updatedAt__date=date_only)
 
         return queryset
 
     def list(self, request, *args, **kwargs):
-        queryset = self.filter_queryset(self.get_queryset())
+        base_queryset = self.get_queryset()
+        page = self.paginate_queryset(base_queryset)
 
-        page = self.paginate_queryset(queryset)
-        if page is not None:
-            paginated_data = []
-            for obj in page:
-                # Get the technology name safely, default to 'Unknown' if not found
-                tech = obj.technologyId.name if obj.technologyId else 'Unknown'
+        if page is None:
+            return Response([])
 
-                # Get machine reports related to the current machine
-                machine_reports = MachineReport.objects.filter(machine_id=obj)
+        # Efficiently prefetch related fields only for paginated objects
+        ids = [obj.id for obj in page]
+        queryset = Machine.objects.filter(id__in=ids).select_related(
+            'customerId', 'statusId', 'areaId', 'subAreaId', 'technologyId'
+        ).prefetch_related(
+            Prefetch(
+                'machinereport_set',
+                queryset=MachineReport.objects.only('machine_id', 'createdAt')
+            )
+        )
 
-                # Get sensor and bearing location counts
-                no_of_sensors = Sensor.objects.filter(machineId=obj).count()
-                no_of_bearing_location = obj.bearinglocation_set.count()
+        machine_map = {str(m.id): m for m in queryset}
+        paginated_data = []
 
-                # Machine data construction
-                machine_data = {
-                    'id': str(obj.id),
-                    'name': obj.name,
-                    'image': obj.image if obj.image else "",
-                    'area': obj.areaId.name if obj.areaId else None,
-                    'areaId': str(obj.areaId.id) if obj.areaId else None,
-                    'subArea': obj.subAreaId.name if obj.subAreaId else None,
-                    'subAreaId': str(obj.subAreaId.id) if obj.subAreaId else None,
-                    'technology': tech,
-                    'technologyId': str(obj.technologyId.id) if obj.technologyId else None,
-                    'status': {
-                        '_id': str(obj.statusId.id) if obj.statusId else None,
-                        'name': obj.statusId.name if obj.statusId else None,
-                        'key': obj.statusId.key if obj.statusId else None,
-                        'description': obj.statusId.description if obj.statusId else None,
-                        'badgeClass': 'badge badge-success-lighten w-100' if obj.statusId and obj.statusId.key == 'NORMAL' else 'badge badge-danger-lighten w-100',
-                        'color': obj.statusId.color if obj.statusId else None,
-                        'severity': obj.statusId.severity if obj.statusId else None
-                    },
-                    'statusId': str(obj.statusId.id) if obj.statusId else None,
-                    'customerId': str(obj.customerId.id) if obj.customerId else None,
-                    'description': obj.description if obj.description else None,
-                    'createdAt': obj.createdAt.isoformat() if obj.createdAt else None,
-                    'updatedAt': obj.updatedAt.isoformat() if obj.updatedAt else None,
-                    'dataUpdatedTime': obj.dataUpdatedTime.isoformat() if obj.dataUpdatedTime else None,
-                    'machineReportDate': [
-                        {'machine_id': str(report.machine_id.id), 'createdAt': report.createdAt.isoformat()} for report in machine_reports
-                    ],
-                    'machineType': obj.machineType,
-                    'noOfSensors': no_of_sensors,
-                    'noOfBearingLocation': no_of_bearing_location,
-                    'observations': obj.observations,
-                    'recommendations': obj.recommendations
-                }
+        for obj in page:
+            m = machine_map.get(str(obj.id))
+            if not m:
+                continue
 
-                # Add the machine data to the paginated list
-                paginated_data.append(machine_data)
+            tech = m.technologyId.name if m.technologyId else 'Unknown'
+            machine_reports = m.machinereport_set.all()
 
-            # Return only the paginated data without additional metadata
-            return Response(paginated_data)
+            machine_data = {
+                'id': str(m.id),
+                'name': m.name or "",
+                'image': m.image or "",
+                'area': m.areaId.name if m.areaId else None,
+                'areaId': str(m.areaId.id) if m.areaId else None,
+                'subArea': m.subAreaId.name if m.subAreaId else None,
+                'subAreaId': str(m.subAreaId.id) if m.subAreaId else None,
+                'technology': tech,
+                'technologyId': str(m.technologyId.id) if m.technologyId else None,
+                'status': {
+                    '_id': str(m.statusId.id) if m.statusId else None,
+                    'name': m.statusId.name if m.statusId else None,
+                    'key': m.statusId.key if m.statusId else None,
+                    'description': m.statusId.description if m.statusId else None,
+                    'badgeClass': 'badge badge-success-lighten w-100' if m.statusId and m.statusId.key == 'NORMAL' else 'badge badge-danger-lighten w-100',
+                    'color': m.statusId.color if m.statusId else None,
+                    'severity': m.statusId.severity if m.statusId else None
+                },
+                'statusId': str(m.statusId.id) if m.statusId else None,
+                'customerId': str(m.customerId.id) if m.customerId else None,
+                'description': m.description or "",
+                'createdAt': m.createdAt.isoformat() if m.createdAt else None,
+                'updatedAt': m.updatedAt.isoformat() if m.updatedAt else None,
+                'dataUpdatedTime': m.dataUpdatedTime.isoformat() if m.dataUpdatedTime else None,
+                'machineReportDate': [
+                    {'machine_id': str(report.machine_id.id), 'createdAt': report.createdAt.isoformat()}
+                    for report in machine_reports
+                ],
+                'machineType': m.machineType or "",
+                'noOfSensors': Sensor.objects.filter(machineId=m).count(),
+                'noOfBearingLocation': BearingLocation.objects.filter(machineId=m).count(),
+                'observations': m.observations or "",
+                'recommendations': m.recommendations or ""
+            }
+            paginated_data.append(machine_data)
 
-        # If no pagination applied, return just the list of results
-        return Response([])  # Fallback to empty list if no pagination is applied
+        return self.get_paginated_response(paginated_data)
 
-from django.db.models import Prefetch
+from django.db.models import Count, Max
 
 class DashboardTreeMapView(View):
-    def get(self, request):
-        customer_id = request.GET.get('customerId')
+    def get(self, request, customerId=None):
         technology_id = request.GET.get('technologyId')
+        
+        # Get normal status for default color
+        normal_status = Status.objects.only('color', 'name', 'severity').get(key='START')
 
-        normal_status = Status.objects.get(key='START')
+        # Filter areas by customer if needed
+        area_filter = {}
+        if customerId:
+            area_filter['customerId'] = customerId
+        areas_qs = Area.objects.filter(**area_filter).only('id', 'name', 'parentId', 'customerId')
+        area_dict = {area.id: area for area in areas_qs}
 
-        areas_prefetch = Prefetch('areas', queryset=Area.objects.all(), to_attr='prefetched_areas')
-        customers = Customer.objects.prefetch_related(areas_prefetch)
+        # Identify top-level areas and group subareas
+        top_areas = [area for area in areas_qs if area.parentId is None]
+        subareas_by_parent = defaultdict(list)
+        for area in areas_qs:
+            if area.parentId:
+                subareas_by_parent[area.parentId].append(area)
 
-        if customer_id:
-            customers = customers.filter(id=ObjectId(customer_id))
+        # Filter customers
+        customers = Customer.objects.all()
+        if customerId:
+            customers = customers.filter(id=customerId)
+        customers = customers.only('id', 'name')
+
+        all_area_ids = [area.id for area in areas_qs]
+
+        # Aggregate machines count and max severity per (sub)area
+        machine_filter = {'areaId__in': all_area_ids}
+        if technology_id:
+            machine_filter['technologyId'] = technology_id
+
+        machine_stats = (
+            Machine.objects.filter(**machine_filter)
+            .values('areaId', 'subAreaId')
+            .annotate(
+                machine_count=Count('id'),
+                max_severity=Max('statusId__severity')
+            )
+        )
+
+        # Build a stats map keyed by subAreaId if exists, else areaId
+        stats_map = defaultdict(lambda: {'machine_count': 0, 'max_severity': -1})
+        for stat in machine_stats:
+            key = stat['subAreaId'] if stat['subAreaId'] else stat['areaId']
+            if stat['max_severity'] is not None and stat['max_severity'] > stats_map[key]['max_severity']:
+                stats_map[key]['max_severity'] = stat['max_severity']
+            stats_map[key]['machine_count'] += stat['machine_count']
+
+        def get_status_by_severity(severity):
+            if severity == -1:
+                return normal_status
+            # Return status with matching severity (assuming severity unique)
+            return Status.objects.filter(severity=severity).first() or normal_status
+
+        def build_area_node(area):
+            # Calculate aggregated data for this area (includes subareas machines)
+            # Start with subareas
+            children = []
+            total_count = 0
+            max_severity = -1
+
+            for subarea in subareas_by_parent.get(area.id, []):
+                child_node = build_subarea_node(subarea)
+                children.append(child_node)
+                total_count += child_node['value'][0]
+                sev = child_node['status']['severity']
+                if sev > max_severity:
+                    max_severity = sev
+
+            # Add machines directly under this area (not in subarea)
+            stat = stats_map.get(area.id, {'machine_count': 0, 'max_severity': -1})
+            total_count += stat['machine_count']
+            if stat['max_severity'] > max_severity:
+                max_severity = stat['max_severity']
+
+            status_obj = get_status_by_severity(max_severity)
+
+            node = {
+                'id': str(area.id),
+                'name': area.name,
+                'key': 'areaId',
+                'params': ['customerId', 'areaId'],
+                'value': [total_count, total_count],
+                'children': children,
+                'status': {
+                    'name': status_obj.name,
+                    'color': status_obj.color,
+                    'severity': status_obj.severity,
+                },
+                'itemStyle': {'color': status_obj.color},
+            }
+
+            return node
+
+        def build_subarea_node(subarea):
+            stat = stats_map.get(subarea.id, {'machine_count': 0, 'max_severity': -1})
+            status_obj = get_status_by_severity(stat['max_severity'])
+            node = {
+                'id': str(subarea.id),
+                'name': subarea.name,
+                'key': 'subAreaId',
+                'params': ['customerId', 'areaId', 'subAreaId'],
+                'value': [stat['machine_count'], stat['machine_count']],
+                'children': [],  # No deeper nesting needed here
+                'status': {
+                    'name': status_obj.name,
+                    'color': status_obj.color,
+                    'severity': status_obj.severity,
+                },
+                'itemStyle': {'color': status_obj.color},
+            }
+            return node
 
         tree_map_data = []
 
         for customer in customers:
+            # Customer node with aggregated value from areas
             customer_node = {
                 '_id': {'customerId': str(customer.id)},
                 'id': str(customer.id),
                 'name': customer.name,
                 'key': 'customerId',
                 'params': ['customerId'],
-                'value': [0, 0],  # Will be updated
+                'value': [0, 0],
                 'children': [],
-                'itemStatus': {
-                    'color': normal_status.color,
-                }
+                'itemStatus': {'color': normal_status.color},
             }
 
-            if hasattr(customer, 'prefetched_areas') and customer.prefetched_areas:
-                for area in customer.prefetched_areas:
-                    area_node = {
-                        'id': str(area.id),
-                        'name': area.name,
-                        'key': 'areaId',
-                        'params': ['customerId', 'areaId'],
-                        'value': [0, 0],  # Will be updated
-                        'children': [],
-                    }
+            total_count = 0
+            max_severity = -1
 
-                    machines = Machine.objects.filter(areaId=area.id)
-                    if technology_id:
-                        machines = machines.filter(technologyId=ObjectId(technology_id))
+            for area in top_areas:
+                # Only add areas for this customer
+                if area.customerId_id != customer.id:
+                    continue
+                area_node = build_area_node(area)
+                customer_node['children'].append(area_node)
 
-                    for machine in machines:
-                        status = machine.statusId if machine.statusId else normal_status
-                        machine_node = {
-                            'id': str(machine.id),
-                            'name': machine.name,
-                            'key': 'machineId',
-                            'params': ['customerId', 'areaId', 'machineId'],
-                            'value': [1, 1],
-                            'children': [],
-                            'status': {
-                                'name': status.name,
-                                'color': status.color,
-                                'severity': status.severity
-                            },
-                            'itemStyle': {
-                                'color': status.color
-                            }
-                        }
-                        area_node['children'].append(machine_node)
+                total_count += area_node['value'][0]
+                sev = area_node['status']['severity']
+                if sev > max_severity:
+                    max_severity = sev
 
-                    customer_node['children'].append(area_node)
-
-            # Recursive call to calculate value and status for the customer
-            final_status, total_count = self.update_parent_status_and_value(customer_node, normal_status)
-
+            status_obj = get_status_by_severity(max_severity)
             customer_node['value'] = [total_count, total_count]
-            customer_node['itemStatus']['color'] = final_status['color']
+            customer_node['itemStatus']['color'] = status_obj.color
+            customer_node['status'] = {
+                'name': status_obj.name,
+                'color': status_obj.color,
+                'severity': status_obj.severity,
+            }
+            customer_node['itemStyle'] = {'color': status_obj.color}
+
             tree_map_data.append(customer_node)
 
         return JsonResponse(tree_map_data, safe=False)
 
+
+    def build_machine_node(self, machine, normal_status):
+        status = machine.statusId
+        return {
+            'id': str(machine.id),
+            'name': machine.name,
+            'key': 'machineId',
+            'params': ['customerId', 'areaId', 'subAreaId', 'machineId'],
+            'value': [],
+            'children': [],
+            'status': {
+                'name': status.name if status else normal_status.name,
+                'color': status.color if status else normal_status.color,
+                'severity': status.severity if status else normal_status.severity,
+            },
+            'itemStyle': {'color': status.color if status else normal_status.color}
+        }
+
     def update_parent_status_and_value(self, node, normal_status):
-        """
-        Recursive function to update both `value` and `itemStyle` based on children's status severity and counts.
-        """
         if not node.get('children'):
             status = node.get('status', {
                 'name': normal_status.name,
@@ -398,11 +538,11 @@ class DashboardTreeMapView(View):
         for child in node['children']:
             child_status, child_count = self.update_parent_status_and_value(child, normal_status)
             total_count += child_count
-            if child_status and child_status.get('severity', -1) > max_severity:
+            if child_status.get('severity', -1) > max_severity:
                 max_severity = child_status['severity']
                 max_status = child_status
 
-        final_status = max_status if max_status else {
+        final_status = max_status or {
             'name': normal_status.name,
             'color': normal_status.color,
             'severity': normal_status.severity
@@ -416,22 +556,77 @@ class DashboardTreeMapView(View):
 
         return final_status, total_count
     
+from django.utils.dateparse import parse_date
+from datetime import date, timedelta
+
 class MachineHealthView(APIView):
     def get(self, request):
-        start_date = request.GET.get('startDate')
-        end_date = request.GET.get('endDate')
+        start_date_str = request.GET.get('startDate')
+        end_date_str = request.GET.get('endDate')
+        customer_id = request.GET.get('customerId')
 
-        if not start_date or not end_date:
-            return Response({'error': 'Missing startDate or endDate'}, status=status.HTTP_400_BAD_REQUEST)
+        # Handle date range (default: last 7 days)
+        if not start_date_str or not end_date_str:
+            end_date = date.today()
+            start_date = end_date - timedelta(days=7)
+        else:
+            start_date = parse_date(start_date_str)
+            end_date = parse_date(end_date_str)
+            if not start_date or not end_date:
+                return Response(
+                    {'error': 'Invalid date format. Use YYYY-MM-DD.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            if start_date > end_date:
+                return Response(
+                    {'error': 'startDate must be before or equal to endDate.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
-        # Simulate fetching data
-        machine_health_data = []  # Assuming empty list if no data
+        # Filter MachineHealth by date range
+        health_qs = MachineHealth.objects.filter(
+            createdAt__date__gte=start_date,
+            createdAt__date__lte=end_date
+        ).select_related(
+            'machineId__statusId', 'machineId__areaId', 'machineId__customerId'
+        )
 
-        if not machine_health_data:
-            return Response({'message': 'No machine health data available.'}, status=status.HTTP_204_NO_CONTENT)
+        # If customerId is provided, filter by machines belonging to the customer
+        if customer_id:
+            health_qs = health_qs.filter(machineId__customerId=customer_id)
+
+        # Build response data
+        machine_health_data = []
+        for mh in health_qs:
+            machine = getattr(mh, 'machineId', None)
+            machine_status = getattr(machine, 'statusId', None) if machine else None
+
+            machine_health_data.append({
+                "machineId": str(machine.id) if machine else None,
+                "createdAt": mh.createdAt.isoformat() if mh.createdAt else None,
+                "machine": {
+                    "_id": str(machine.id) if machine else None,
+                    "name": getattr(machine, 'name', None),
+                    "tagNumber": getattr(machine, 'tagNumber', None),
+                    "areaId": str(machine.areaId.id) if machine and machine.areaId else None,
+                    "customerId": str(machine.customerId.id) if machine and machine.customerId else None,
+                    "description": getattr(machine, 'description', ""),
+                    "machineType": getattr(machine, 'machineType', None),
+                    "statusId": str(machine.statusId.id) if machine and machine.statusId else None,
+                    "updatedAt": machine.updatedAt.isoformat() if machine and machine.updatedAt else None,
+                } if machine else None,
+                "status": {
+                    "_id": str(machine_status.id) if machine_status else None,
+                    "name": getattr(machine_status, 'name', None),
+                    "key": getattr(machine_status, 'key', None),
+                    "description": getattr(machine_status, 'description', ""),
+                    "badgeClass": getattr(machine_status, 'badgeClass', ""),
+                    "color": getattr(machine_status, 'color', ""),
+                    "severity": getattr(machine_status, 'severity', None),
+                } if machine_status else None,
+            })
 
         return Response(machine_health_data, status=status.HTTP_200_OK)
-    
 class MachineDetailView(View):
     def get(self, request, machine_id):
         # Validate machine_id
@@ -538,7 +733,7 @@ class CustomBearingLocationView(View):
         data["bearingId"] = self.serialize_related(bearing_location.bearingId)
         data["statusId"] = self.serialize_related(bearing_location.statusId)
 
-        return JsonResponse(data, safe=False)
+        return JsonResponse(data)
 
     def serialize_related(self, obj):
         if not obj:
