@@ -1,14 +1,13 @@
-from rest_framework import viewsets
+from rest_framework import viewsets, status
 from rest_framework.response import Response
-from Root.models import *
-from Vibration.models import Sensor, MultiChannelSensor
-from screen_views.serializers import *
-from rest_framework import status
 from rest_framework.views import APIView
+
 from bson import ObjectId
 from django.http import JsonResponse
 from pymongo import MongoClient
-from django.shortcuts import get_object_or_404
+
+from Root.models import *
+from screen_views.serializers import *
 
 class AreaListView(APIView):
     def get(self, request):
@@ -162,51 +161,6 @@ class CustomTechnologyView(viewsets.ReadOnlyModelViewSet):
     serializer_class = CustomTechnologySerializer
     pagination_class = None
 
-""" class CustomSensorView(APIView):
-    def get(self, request):
-        sensor_type = request.query_params.get('sensorsType', '').lower()
-        if sensor_type == 'multichannel':
-            model = MultiChannelSensor
-        elif sensor_type == 'mems':
-            model = Sensor
-        else:
-            return Response({'error': 'Invalid sensorType'}, status=status.HTTP_400_BAD_REQUEST)
-
-        queryset = model.objects.all()
-
-        data = []
-        for obj in queryset:
-            base_data = {
-                'id': str(obj.id),
-                'name': obj.name,
-                'gRange': obj.gRange,
-                'numberOfSamples': obj.numberOfSamples,
-                'address': getattr(obj, 'address', None),
-                'ssid': getattr(obj, 'ssid', None),
-                'password': getattr(obj, 'password', None),
-                'reportingFrequency': getattr(obj, 'reportingFrequency', None),
-                'samplingFrequency': getattr(obj, 'samplingFrequency', None),
-                # Machine and related fields
-                'machineId': str(obj.machineId.id) if getattr(obj, 'machineId', None) else None,
-                'machineName': getattr(obj.machineId, 'name', None) if getattr(obj, 'machineId', None) else None,
-                'areaId': str(obj.machineId.areaId.id) if getattr(obj, 'machineId', None) and getattr(obj.machineId, 'areaId', None) else None,
-                'areaName': getattr(obj.machineId.areaId, 'name', None) if getattr(obj, 'machineId', None) and getattr(obj.machineId, 'areaId', None) else None,
-                'subAreaId': str(obj.machineId.subAreaId.id) if getattr(obj, 'machineId', None) and getattr(obj.machineId, 'subAreaId', None) else None,
-                'subareaName': getattr(obj.machineId.subAreaId, 'name', None) if getattr(obj, 'machineId', None) and getattr(obj.machineId, 'subAreaId', None) else None,
-                'customerId': str(obj.customerId.id) if getattr(obj.customerId, None) else None,
-                'customerName': getattr(obj.customerId, 'name', None) if getattr(obj, 'customerId', None) else None,
-            }
-            # For MEMS sensors, add bearing location fields
-            if sensor_type == 'mems':
-                base_data['bearingLocationId'] = (
-                    str(obj.bearingLocationId.id) if hasattr(obj.bearingLocationId, 'id') else str(obj.bearingLocationId)
-                ) if getattr(obj, 'bearingLocationId', None) else None
-                base_data['bearingLocationName'] = getattr(obj.bearingLocationId, 'name', None) if getattr(obj, 'bearingLocationId', None) else None
-
-            data.append(base_data)
-
-        return Response(data, status=status.HTTP_200_OK) """
-
 class CustomSensorView(APIView):
     def get(self, request):
         sensor_type = request.query_params.get('sensorsType', '').lower()
@@ -335,8 +289,8 @@ class MachineListView(APIView):
         machine_id = request.query_params.get('machineId')
 
         # MongoDB connection
-        client = MongoClient("mongodb://localhost:27017/")  # Replace with your MongoDB URI
-        db = client.get_database("AAMS")  # Use the configured database name
+        client = MongoClient("mongodb://localhost:27017/")  
+        db = client.get_database("AAMS")  
 
         # MongoDB aggregation pipeline
         pipeline = [

@@ -1,12 +1,13 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework import status
-from Root.models import Customer, Machine, Status
+
 from datetime import datetime
-from django.utils.dateparse import parse_date
 from bson import ObjectId, errors
-from django.utils.timezone import make_aware
-from collections import defaultdict
+from django.db.models import Case, When, IntegerField, Sum
+from django.utils.decorators import method_decorator
+from django.views.decorators.cache import cache_page
+
+from Root.models import Customer, Machine, Status
 
 class MachineCountView(APIView):
     def get(self, request):
@@ -169,72 +170,73 @@ class DashboardStatsView(APIView):
 
 class CustomCustomersView(APIView):
     def get(self, request):
-        # Step 1: Fetch all necessary machines in a single query
-        machines = Machine.objects.select_related('customerId', 'statusId') \
-            .values('customerId', 'machineType', 'statusId__name')
+        # Step 1: Get status IDs for 'alert' and 'unacceptable' only once
+        status_ids = {
+            'alert': list(Status.objects.filter(name__iexact='alert').values_list('id', flat=True)),
+            'unacceptable': list(Status.objects.filter(name__iexact='unacceptable').values_list('id', flat=True))
+        }
 
-        # Step 2: Aggregate counts by customer
-        customer_stats = defaultdict(lambda: {
-            'online': 0,
-            'hybrid': 0,
-            'offline': 0,
-            'alert': 0,
-            'unacceptable': 0
-        })
+        # Step 2: Aggregate machine stats per customer in a single query
+        machine_stats = Machine.objects.values('customerId').annotate(
+            online_count=Sum(Case(When(machineType__iexact='online', then=1), default=0, output_field=IntegerField())),
+            hybrid_count=Sum(Case(When(machineType__iexact='hybrid', then=1), default=0, output_field=IntegerField())),
+            offline_count=Sum(Case(When(machineType__iexact='offline', then=1), default=0, output_field=IntegerField())),
+            alert_count=Sum(Case(When(statusId__in=status_ids['alert'], then=1), default=0, output_field=IntegerField())),
+            unacceptable_count=Sum(Case(When(statusId__in=status_ids['unacceptable'], then=1), default=0, output_field=IntegerField()))
+        )
 
-        for machine in machines:
-            cid = machine['customerId']
-            mtype = machine['machineType'].lower() if machine['machineType'] else ''
-            status_name = machine['statusId__name']
+        # Step 3: Convert stats to a fast lookup dictionary
+        stats_map = {
+            item['customerId']: {
+                'online': item['online_count'],
+                'hybrid': item['hybrid_count'],
+                'offline': item['offline_count'],
+                'alert': item['alert_count'],
+                'unacceptable': item['unacceptable_count'],
+            }
+            for item in machine_stats
+        }
 
-            if mtype == 'online':
-                customer_stats[cid]['online'] += 1
-            elif mtype == 'hybrid':
-                customer_stats[cid]['hybrid'] += 1
-            elif mtype == 'offline':
-                customer_stats[cid]['offline'] += 1
+        # Step 4: Fetch customers with related area/subarea in one query
+        customers = Customer.objects.select_related('areaId', 'subareaId').only(
+            'id', 'name', 'logo', 'siteImage',
+            'createdAt', 'latitude', 'longitude', 'updatedAt',
+            'areaId', 'subareaId'
+        )
 
-            if status_name == 'Alert':
-                customer_stats[cid]['alert'] += 1
-            elif status_name == 'Unacceptable':
-                customer_stats[cid]['unacceptable'] += 1
-
-        # Step 3: Fetch all customers in one go
-        customers = Customer.objects.all().select_related('areaId', 'subareaId')
-        customers_data = []
-
+        now_iso = datetime.now().isoformat()
+        response_data = []
         for customer in customers:
-            stats = customer_stats.get(customer.id, {
+            stats = stats_map.get(customer.id, {
                 'online': 0, 'hybrid': 0, 'offline': 0,
                 'alert': 0, 'unacceptable': 0
             })
             total = stats['online'] + stats['hybrid'] + stats['offline']
 
-            customer_info = {
+            response_data.append({
                 'id': str(customer.id),
                 'name': customer.name,
                 'logo': customer.logo,
                 'siteImage': customer.siteImage,
-                'createdAt': customer.createdAt.isoformat(),
+                'createdAt': customer.createdAt.isoformat() if customer.createdAt else None,
                 'latitude': customer.latitude,
                 'longitude': customer.longitude,
-                'updatedAt': customer.updatedAt.isoformat(),
+                'updatedAt': customer.updatedAt.isoformat() if customer.updatedAt else None,
                 'subAreas': {
                     'id': str(customer.subareaId.id),
                     'name': customer.subareaId.name
-                } if getattr(customer, 'subareas', None) else None,
+                } if customer.subareaId else None,
                 'areas': {
                     'id': str(customer.areaId.id),
                     'name': customer.areaId.name
-                } if getattr(customer, 'areas', None) else None,
-                'latestUpdateTime': datetime.now().isoformat(),
+                } if customer.areaId else None,
+                'latestUpdateTime': now_iso,
                 'onlinecount': stats['online'],
                 'hybridcount': stats['hybrid'],
                 'offlinecount': stats['offline'],
                 'alertCount': stats['alert'],
-                'unacceptableCount': stats['unacceptable'],
+                'unaceptableCount': stats['unacceptable'],
                 'totalCount': total,
-            }
-            customers_data.append(customer_info)
+            })
 
-        return Response(customers_data, status=status.HTTP_200_OK)
+        return Response(response_data)

@@ -15,7 +15,7 @@ import json
 from bson import ObjectId
 
 class HistoricalModel(models.Model):
-    history = HistoricalRecords()
+    history = HistoricalRecords(inherit=True)
 
     class Meta:
         abstract = True

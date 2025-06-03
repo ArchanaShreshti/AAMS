@@ -1,15 +1,15 @@
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from django.db.models import Q
-from Schedules.models import Schedule
-from Root.models import Area, Customer
-from screen_views.serializers import CustomAreaSerializer, CustomSubAreaSerializer
-from rest_framework import viewsets
-from bson import ObjectId
+from rest_framework import viewsets, status
+
 from pymongo import MongoClient
 from django.conf import settings
 from django.http import JsonResponse
 from django.views import View
+
+from Schedules.models import Schedule
+from Root.models import Area, Customer
+from screen_views.serializers import CustomAreaSerializer, CustomSubAreaSerializer
 from Report.models import ImageReport, MachineReport
 
 class ScheduleStatsView(viewsets.ReadOnlyModelViewSet):
@@ -46,7 +46,6 @@ class CustomerAreasView(viewsets.ReadOnlyModelViewSet):
         else:
             return Area.objects.all()
 
-    
 class CustomerSubAreaView(viewsets.ReadOnlyModelViewSet):
     serializer_class = CustomSubAreaSerializer
 
@@ -55,8 +54,6 @@ class CustomerSubAreaView(viewsets.ReadOnlyModelViewSet):
         if customer_id:
             return Area.objects.filter(customerId=customer_id).exclude(parentId=None)
         return Area.objects.exclude(parentId=None)
-
-from rest_framework import status
 
 class TechnologyDetailsView(APIView):
     def get(self, request):

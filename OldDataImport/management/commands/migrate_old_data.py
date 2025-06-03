@@ -80,7 +80,7 @@ class Command(BaseCommand):
         headers = {
             'Accept': 'application/json, text/plain, */*',
             'Accept-Language': 'en-US,en;q=0.9,kn;q=0.8,zh-CN;q=0.7,zh;q=0.6',
-            'Authorization': 'Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzQ4NTIxMjYxLCJpYXQiOjE3NDg0OTk2NjEsImp0aSI6ImZlZjZkYjUzMDM0NzQyMmNiNDBiMmU5NjVmOTc3ZDQ5IiwidXNlcl9pZCI6IjY4MTg1Njc2MjYxZDcwZjRhNWU0YzBhNCJ9.PDxYiiuQz5ZPRNZ_sm1tCx1H4agKRWNu1oeGLAHggpk',
+            'Authorization': 'Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzQ4NjIzNTY0LCJpYXQiOjE3NDg2MDE5NjQsImp0aSI6IjcyOGJkYWZmZjNjYTQwMmFiYTczYzFlOThiNjZkZmU0IiwidXNlcl9pZCI6IjY4MTg1Njc2MjYxZDcwZjRhNWU0YzBhNCJ9.ecFtjNR8RgcUMKFcZyyuorazh-miZ_q4nrJVVJRBhTE',
             'Connection': 'keep-alive',
             'DNT': '1',
             'Origin': 'http://localhost:3000',
@@ -101,6 +101,17 @@ class Command(BaseCommand):
         machine_id_map = {}
 
         for old_document in old_collection.find():
+                try:
+                    new_document = convert_data(old_document)
+                    new_collection.insert_one(new_document)  # Direct insert with original _id
+                    machine_id_map[str(old_document["_id"])] = str(new_document["_id"])
+                    self.stdout.write(self.style.SUCCESS(f"Inserted: {new_document['tagNumber']}"))
+                except Exception as e:
+                    self.stdout.write(self.style.ERROR(
+                        f"Failed to insert {old_document.get('tagNumber')}: {e}"
+                    ))
+
+        """ for old_document in old_collection.find():
             try:
                 new_document = convert_data(old_document)
                 converted_document = convert_object_ids_to_str(new_document)
@@ -116,18 +127,9 @@ class Command(BaseCommand):
             except Exception as e:
                 self.stdout.write(self.style.ERROR(
                     f"Failed to insert {old_document.get('tagNumber')}: {e}"
-                ))
+                )) """
 
-        """ for old_document in old_collection.find():
-                try:
-                    new_document = convert_data(old_document)
-                    new_collection.insert_one(new_document)  # Direct insert with original _id
-                    machine_id_map[str(old_document["_id"])] = str(new_document["_id"])
-                    self.stdout.write(self.style.SUCCESS(f"Inserted: {new_document['tagNumber']}"))
-                except Exception as e:
-                    self.stdout.write(self.style.ERROR(
-                        f"Failed to insert {old_document.get('tagNumber')}: {e}"
-                    )) """
+        
             
 
 

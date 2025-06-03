@@ -43,7 +43,7 @@ urlpatterns = [
         path('areas/all', GetTotalAreasView.as_view(), name='Arealist'),
         path('multichannel/all', CustomSensorView.as_view(), name='custom-multichannel-sensors'),                       #DashboardSettings-4
         path('sensors/all', CustomSensorView.as_view(), name='custom-sensors'),                                          #DashboardSettings-5
-        path('machines/<str:machine_id>/bearing-location/all', BearingLocationByMachineView.as_view(), 
+        path('machines/<str:machineId>/bearing-location/all', BearingLocationByMachineView.as_view(), 
              name='machine_bearing_locations'),                                                                          # Machine-view - 2
         path('machines/<str:machine_id>', MachineDetailView.as_view(), name='machine_detail'),
         path('<str:customerId>/dashboard/machine-details/', MachineDetailsView.as_view({'get': 'list'})),

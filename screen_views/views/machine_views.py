@@ -1,11 +1,12 @@
 from rest_framework import viewsets
-from rest_framework.response import Response
 from rest_framework.views import APIView
-from django.views import View
-from Root.models import BearingLocation, Machine
-from screen_views.serializers import *
+
 from collections import defaultdict
 from django.http import JsonResponse
+from django.views import View
+
+from Root.models import BearingLocation, Machine
+from screen_views.serializers import *
 
 class CustomBearingView(APIView):
     def get(self, request):
@@ -23,11 +24,11 @@ class CustomBearingView(APIView):
     
 class BearingLocationByMachineView(View):
     def get(self, request, *args, **kwargs):
-        machine_id = kwargs.get('machine_id')
-        print("Machine ID:", machine_id)
-        if not ObjectId.is_valid(machine_id):
+        machineId = kwargs.get('machineId')
+        print("Machine ID:", machineId)
+        if not ObjectId.is_valid(machineId):
             return JsonResponse({"error": "Invalid machineId"}, status=400)
-        qs = BearingLocation.objects.select_related('bearingId').filter(machineId_id=ObjectId(machine_id))
+        qs = BearingLocation.objects.select_related('bearingId').filter(machineId_id=ObjectId(machineId))
         print("QuerySet count:", qs.count())
         data = [serialize_bearing_location(bl) for bl in qs]
         print("Data:", data)

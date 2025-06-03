@@ -1,19 +1,21 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework import status, viewsets
+from rest_framework import status, viewsets, pagination
+
+from django.views import View
+from django.db.models import Count, Prefetch, Max
+from django.http import JsonResponse
+from django.utils.dateparse import parse_datetime, parse_date
+
 from bson import ObjectId
+from bson.errors import InvalidId
+from datetime import date, timedelta
+from collections import defaultdict
+
 from Root.models import Customer, Status, Area, Technology, Machine, MachineHealth
 from Report.models import MachineReport
-from rest_framework.decorators import action
-from django.views import View
-from django.db.models import Prefetch
-from django.http import JsonResponse
 from Schedules.models import ScheduleTask, Schedule
 from screen_views.serializers import *
-from bson.errors import InvalidId
-from rest_framework.pagination import PageNumberPagination
-from django.db.models import Count, Prefetch
-from django.db import connection
 
 class CustomerDashboardStatsView(APIView):
     def get(self, request, *args, **kwargs):
@@ -213,11 +215,6 @@ class StatusListView(APIView):
         
         return Response(status_data, status=status.HTTP_200_OK)
 
-from rest_framework import pagination
-from collections import defaultdict
-from django.utils.dateparse import parse_datetime, parse_date
-import time
-
 class NoMetaPagination(pagination.PageNumberPagination):
     page_size = 15
     page_size_query_param = 'pageSize'
@@ -286,7 +283,7 @@ class MachineDetailsView(viewsets.ModelViewSet):
         ).prefetch_related(
             Prefetch(
                 'machinereport_set',
-                queryset=MachineReport.objects.only('machine_id', 'createdAt')
+                queryset=MachineReport.objects.only('machineId', 'createdAt')
             )
         )
 
@@ -340,203 +337,176 @@ class MachineDetailsView(viewsets.ModelViewSet):
 
         return self.get_paginated_response(paginated_data)
 
-from django.db.models import Count, Max
-
 class DashboardTreeMapView(View):
     def get(self, request, customerId=None):
         technology_id = request.GET.get('technologyId')
-        
-        # Get normal status for default color
-        normal_status = Status.objects.only('color', 'name', 'severity').get(key='START')
 
-        # Filter areas by customer if needed
+        try:
+            normal_status = Status.objects.only('color', 'name', 'severity').get(key='START')
+        except Status.DoesNotExist:
+            normal_status = None
+
+        if customerId is None:
+            customerId = request.GET.get('customerId')
+
         area_filter = {}
         if customerId:
             area_filter['customerId'] = customerId
+
         areas_qs = Area.objects.filter(**area_filter).only('id', 'name', 'parentId', 'customerId')
-        area_dict = {area.id: area for area in areas_qs}
-
-        # Identify top-level areas and group subareas
-        top_areas = [area for area in areas_qs if area.parentId is None]
+        top_areas = [a for a in areas_qs if a.parentId is None]
         subareas_by_parent = defaultdict(list)
-        for area in areas_qs:
-            if area.parentId:
-                subareas_by_parent[area.parentId].append(area)
+        for a in areas_qs:
+            if a.parentId:
+                subareas_by_parent[a.parentId].append(a)
 
-        # Filter customers
         customers = Customer.objects.all()
         if customerId:
             customers = customers.filter(id=customerId)
         customers = customers.only('id', 'name')
 
-        all_area_ids = [area.id for area in areas_qs]
-
-        # Aggregate machines count and max severity per (sub)area
+        all_area_ids = [a.id for a in areas_qs]
         machine_filter = {'areaId__in': all_area_ids}
         if technology_id:
             machine_filter['technologyId'] = technology_id
 
-        machine_stats = (
-            Machine.objects.filter(**machine_filter)
-            .values('areaId', 'subAreaId')
-            .annotate(
-                machine_count=Count('id'),
-                max_severity=Max('statusId__severity')
-            )
-        )
+        # Get all machines grouped by areaId and subAreaId
+        machines_qs = Machine.objects.filter(**machine_filter).select_related('statusId')
+        machines_by_subarea = defaultdict(list)
+        machines_by_area = defaultdict(list)
+        for m in machines_qs:
+            if m.subAreaId:
+                machines_by_subarea[m.subAreaId].append(m)
+            else:
+                machines_by_area[m.areaId].append(m)
 
-        # Build a stats map keyed by subAreaId if exists, else areaId
-        stats_map = defaultdict(lambda: {'machine_count': 0, 'max_severity': -1})
-        for stat in machine_stats:
-            key = stat['subAreaId'] if stat['subAreaId'] else stat['areaId']
-            if stat['max_severity'] is not None and stat['max_severity'] > stats_map[key]['max_severity']:
-                stats_map[key]['max_severity'] = stat['max_severity']
-            stats_map[key]['machine_count'] += stat['machine_count']
+        def get_color_by_severity(severity):
+            if severity >= 70:
+                return '#fa0d1c'  # red
+            elif severity >= 30:
+                return '#f5a623'  # yellow
+            else:
+                return '#00FF00'  # green
 
-        def get_status_by_severity(severity):
-            if severity == -1:
-                return normal_status
-            # Return status with matching severity (assuming severity unique)
-            return Status.objects.filter(severity=severity).first() or normal_status
+        def get_node_color(machines):
+            if not machines:
+                return normal_status.color if normal_status else '#00FF00'
+            max_sev = max((m.statusId.severity for m in machines if m.statusId), default=-1)
+            return get_color_by_severity(max_sev)
 
-        def build_area_node(area):
-            # Calculate aggregated data for this area (includes subareas machines)
-            # Start with subareas
-            children = []
-            total_count = 0
-            max_severity = -1
-
-            for subarea in subareas_by_parent.get(area.id, []):
-                child_node = build_subarea_node(subarea)
-                children.append(child_node)
-                total_count += child_node['value'][0]
-                sev = child_node['status']['severity']
-                if sev > max_severity:
-                    max_severity = sev
-
-            # Add machines directly under this area (not in subarea)
-            stat = stats_map.get(area.id, {'machine_count': 0, 'max_severity': -1})
-            total_count += stat['machine_count']
-            if stat['max_severity'] > max_severity:
-                max_severity = stat['max_severity']
-
-            status_obj = get_status_by_severity(max_severity)
-
-            node = {
-                'id': str(area.id),
-                'name': area.name,
-                'key': 'areaId',
-                'params': ['customerId', 'areaId'],
-                'value': [total_count, total_count],
-                'children': children,
-                'status': {
-                    'name': status_obj.name,
-                    'color': status_obj.color,
-                    'severity': status_obj.severity,
-                },
-                'itemStyle': {'color': status_obj.color},
+        def build_machine_node(machine):
+            status = machine.statusId or normal_status
+            return {
+                'id': str(machine.id),
+                'name': machine.name,
+                'key': 'machineId',
+                'params': ['customerId', 'areaId', 'subAreaId', 'machineId'],
+                'value': [1, 1],
+                'children': [],
+                'itemStyle': {'color': status.color if status else '#00FF00'},
             }
 
-            return node
-
         def build_subarea_node(subarea):
-            stat = stats_map.get(subarea.id, {'machine_count': 0, 'max_severity': -1})
-            status_obj = get_status_by_severity(stat['max_severity'])
-            node = {
+            machines = machines_by_subarea.get(subarea.id, [])
+            children = [build_machine_node(m) for m in machines]
+            color = get_node_color(machines)
+
+            machine_count = len(machines) or 1
+
+            return {
                 'id': str(subarea.id),
                 'name': subarea.name,
                 'key': 'subAreaId',
                 'params': ['customerId', 'areaId', 'subAreaId'],
-                'value': [stat['machine_count'], stat['machine_count']],
-                'children': [],  # No deeper nesting needed here
-                'status': {
-                    'name': status_obj.name,
-                    'color': status_obj.color,
-                    'severity': status_obj.severity,
-                },
-                'itemStyle': {'color': status_obj.color},
+                'value': [machine_count, machine_count],
+                'children': children,
+                'itemStyle': {'color': color},
             }
-            return node
+
+        def build_area_node(area):
+            # Subareas as children nodes
+            subarea_children = [build_subarea_node(sa) for sa in subareas_by_parent.get(area.id, [])]
+
+            # Machines directly under area (without subarea)
+            direct_machines = machines_by_area.get(area.id, [])
+            machine_children = [build_machine_node(m) for m in direct_machines]
+
+            children = subarea_children + machine_children
+
+            # Calculate color based on all children
+            all_machines = direct_machines[:]
+            for sa in subarea_children:
+                # Count machines in subarea children (sum their value)
+                all_machines += machines_by_subarea.get(int(sa['id']), [])
+
+            color = get_node_color(all_machines)
+            machine_count = len(all_machines) or 1
+
+            return {
+                'id': str(area.id),
+                'name': area.name,
+                'key': 'areaId',
+                'params': ['customerId', 'areaId'],
+                'value': [machine_count, machine_count],
+                'children': children,
+                'itemStyle': {'color': color},
+            }
 
         tree_map_data = []
 
         for customer in customers:
-            # Customer node with aggregated value from areas
+            # Areas belonging to this customer
+            cust_areas = [a for a in top_areas if a.customerId_id == customer.id]
+            children = [build_area_node(area) for area in cust_areas]
+
+            # Aggregate all machines under this customer for color & count
+            all_machines = []
+            for area in cust_areas:
+                all_machines += machines_by_area.get(area.id, [])
+                for subarea in subareas_by_parent.get(area.id, []):
+                    all_machines += machines_by_subarea.get(subarea.id, [])
+
+            color = get_node_color(all_machines)
+            machine_count = len(all_machines) or 1
+
             customer_node = {
                 '_id': {'customerId': str(customer.id)},
                 'id': str(customer.id),
                 'name': customer.name,
                 'key': 'customerId',
                 'params': ['customerId'],
-                'value': [0, 0],
-                'children': [],
-                'itemStatus': {'color': normal_status.color},
+                'value': [machine_count, machine_count],
+                'children': children,
+                'itemStyle': {'color': color},
             }
-
-            total_count = 0
-            max_severity = -1
-
-            for area in top_areas:
-                # Only add areas for this customer
-                if area.customerId_id != customer.id:
-                    continue
-                area_node = build_area_node(area)
-                customer_node['children'].append(area_node)
-
-                total_count += area_node['value'][0]
-                sev = area_node['status']['severity']
-                if sev > max_severity:
-                    max_severity = sev
-
-            status_obj = get_status_by_severity(max_severity)
-            customer_node['value'] = [total_count, total_count]
-            customer_node['itemStatus']['color'] = status_obj.color
-            customer_node['status'] = {
-                'name': status_obj.name,
-                'color': status_obj.color,
-                'severity': status_obj.severity,
-            }
-            customer_node['itemStyle'] = {'color': status_obj.color}
-
             tree_map_data.append(customer_node)
 
         return JsonResponse(tree_map_data, safe=False)
-
-
-    def build_machine_node(self, machine, normal_status):
-        status = machine.statusId
-        return {
-            'id': str(machine.id),
-            'name': machine.name,
-            'key': 'machineId',
-            'params': ['customerId', 'areaId', 'subAreaId', 'machineId'],
-            'value': [],
-            'children': [],
-            'status': {
-                'name': status.name if status else normal_status.name,
-                'color': status.color if status else normal_status.color,
-                'severity': status.severity if status else normal_status.severity,
-            },
-            'itemStyle': {'color': status.color if status else normal_status.color}
-        }
-
-    def update_parent_status_and_value(self, node, normal_status):
+    
+    def update_parent_status_and_value(self, node, normal_status, stats_map):
         if not node.get('children'):
-            status = node.get('status', {
-                'name': normal_status.name,
-                'color': normal_status.color,
-                'severity': normal_status.severity
-            })
-            node['itemStyle'] = {'color': status['color']}
-            node['value'] = [1, 1]
-            return status, 1
+            node_id = node.get('id')
+            stat = stats_map.get(node_id, {'machine_count': 0, 'max_severity': -1})
+            severity = stat['max_severity']
+            count = stat['machine_count'] or 1
+
+            status_obj = self.get_status_by_severity(severity, normal_status)
+
+            node['itemStyle'] = {'color': status_obj.color if status_obj else '#00FF00'}
+            node['value'] = [count, count]
+            node['status'] = {
+                'name': status_obj.name if status_obj else 'Unknown',
+                'color': status_obj.color if status_obj else '#00FF00',
+                'severity': status_obj.severity if status_obj else -1
+            }
+            return node['status'], count
 
         max_severity = -1
         max_status = None
         total_count = 0
 
         for child in node['children']:
-            child_status, child_count = self.update_parent_status_and_value(child, normal_status)
+            child_status, child_count = self.update_parent_status_and_value(child, normal_status, stats_map)
             total_count += child_count
             if child_status.get('severity', -1) > max_severity:
                 max_severity = child_status['severity']
@@ -555,9 +525,11 @@ class DashboardTreeMapView(View):
             node['status'] = final_status
 
         return final_status, total_count
-    
-from django.utils.dateparse import parse_date
-from datetime import date, timedelta
+
+    def get_status_by_severity(self, severity, normal_status):
+        if severity == -1 or not normal_status:
+            return normal_status
+        return Status.objects.filter(severity=severity).first() or normal_status
 
 class MachineHealthView(APIView):
     def get(self, request):
@@ -627,6 +599,7 @@ class MachineHealthView(APIView):
             })
 
         return Response(machine_health_data, status=status.HTTP_200_OK)
+    
 class MachineDetailView(View):
     def get(self, request, machine_id):
         # Validate machine_id
