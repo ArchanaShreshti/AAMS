@@ -15,7 +15,7 @@ class Feedback(models.Model):
     def __str__(self):
         return self.feedbackResponse
 
-@auto_admin_register
+@auto_admin_register()
 class FeedbackAlert(models.Model):
     id = ObjectIdAutoField(primary_key=True)
     feedbackId = models.ForeignKey(Feedback, on_delete=models.CASCADE, related_name='feedback_alert_id')

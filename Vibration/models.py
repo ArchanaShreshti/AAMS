@@ -120,7 +120,7 @@ class RawData(models.Model):
 
         super().save(*args, **kwargs)
 
-@auto_admin_register
+@auto_admin_register()
 class LatestData(models.Model):
     id = ObjectIdAutoField(primary_key=True)
     bearingLocationId = models.ForeignKey('Root.BearingLocation', on_delete=models.CASCADE)
@@ -152,7 +152,7 @@ class LatestData(models.Model):
 
         super().save(*args, **kwargs)
 
-@auto_admin_register
+@auto_admin_register()
 class LatestRMSData(models.Model):
     id = ObjectIdAutoField(primary_key=True)
     bearingLocationId = models.ForeignKey('Root.BearingLocation', on_delete=models.CASCADE)

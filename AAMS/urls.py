@@ -22,12 +22,24 @@ from Vibration.screenAPIs.machine_dashboard import *
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('Root/',include('Root.urls')),
+    path('Feedback/',include('Feedback.urls')),
+    path('OilAnalysis/',include('OilAnalysis.urls')),
+    path('PreventiveCheck/',include('PreventiveCheck.urls')),
+    path('Report/',include('Report.urls')),
+    path('Safety/',include('Safety.urls')),
+    path('Schedules/',include('Schedules.urls')),
+    path('Spare/',include('Spare.urls')),
+    path('Vibration/',include('Vibration.urls')),
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
+    
     # To test API endpoints interactively
     path('api/schema/swagger-ui/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),  
+    
     # To view the API documentation in a readable format
     # path('api/schema/redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),  
     path('api/v1/', include('screen_views.urls')),
+    
+    # Machine Dashboard Endpoints
     path('AAMS/', include([
         path('fft/setValue', setCalibrationValueInFile),
         path('audio', startAudio), 

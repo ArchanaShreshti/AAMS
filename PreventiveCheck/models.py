@@ -18,7 +18,7 @@ class PreventiveCheck(models.Model):
     def __str__(self):
         return self.type
 
-@auto_admin_register
+@auto_admin_register()
 class preventiveCheckAlert(models.Model):
     id = ObjectIdAutoField(primary_key=True)
     preventiveCheckId = models.ForeignKey(PreventiveCheck, on_delete=models.CASCADE, related_name='preventive_check_alert_id')

@@ -101,17 +101,6 @@ class Command(BaseCommand):
         machine_id_map = {}
 
         for old_document in old_collection.find():
-                try:
-                    new_document = convert_data(old_document)
-                    new_collection.insert_one(new_document)  # Direct insert with original _id
-                    machine_id_map[str(old_document["_id"])] = str(new_document["_id"])
-                    self.stdout.write(self.style.SUCCESS(f"Inserted: {new_document['tagNumber']}"))
-                except Exception as e:
-                    self.stdout.write(self.style.ERROR(
-                        f"Failed to insert {old_document.get('tagNumber')}: {e}"
-                    ))
-
-        """ for old_document in old_collection.find():
             try:
                 new_document = convert_data(old_document)
                 converted_document = convert_object_ids_to_str(new_document)
@@ -127,7 +116,19 @@ class Command(BaseCommand):
             except Exception as e:
                 self.stdout.write(self.style.ERROR(
                     f"Failed to insert {old_document.get('tagNumber')}: {e}"
-                )) """
+                ))
+
+
+        """ for old_document in old_collection.find():
+                try:
+                    new_document = convert_data(old_document)
+                    new_collection.insert_one(new_document)  # Direct insert with original _id
+                    machine_id_map[str(old_document["_id"])] = str(new_document["_id"])
+                    self.stdout.write(self.style.SUCCESS(f"Inserted: {new_document['tagNumber']}"))
+                except Exception as e:
+                    self.stdout.write(self.style.ERROR(
+                        f"Failed to insert {old_document.get('tagNumber')}: {e}"
+                    )) """
 
         
             

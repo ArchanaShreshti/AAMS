@@ -25,13 +25,10 @@ class CustomBearingView(APIView):
 class BearingLocationByMachineView(View):
     def get(self, request, *args, **kwargs):
         machineId = kwargs.get('machineId')
-        print("Machine ID:", machineId)
         if not ObjectId.is_valid(machineId):
             return JsonResponse({"error": "Invalid machineId"}, status=400)
         qs = BearingLocation.objects.select_related('bearingId').filter(machineId_id=ObjectId(machineId))
-        print("QuerySet count:", qs.count())
         data = [serialize_bearing_location(bl) for bl in qs]
-        print("Data:", data)
         return JsonResponse(data, safe=False)
 
 def serialize_bearing_location(bl):

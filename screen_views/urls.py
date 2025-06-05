@@ -6,17 +6,6 @@ from Root.views import *
 from Vibration.screenAPIs.machine_dashboard import *
 
 router = DefaultRouter()
-models = apps.get_models()
-for index, model in enumerate(models):
-    model_name = model.__name__.lower()
-    viewset = globals()[f'{model_name}ViewSet']
-
-    if model_name == 'DailyTaskSchedule':
-        router.register(f'{model_name}/all', viewset, basename=f'{model_name}_all')                                     # Schedules -3
-        
-    elif model_name == 'PreventiveCheck':
-        router.register(f'{model_name}/all', viewset, basename=f'{model_name}_all')                                     # Reports - Thermography-1
-
 
 urlpatterns = [
     path('login', LoginView.as_view()),                                                                  # Login Screen - 1
@@ -77,6 +66,7 @@ urlpatterns = [
     path('scheduleTask/priority', scheduleTaskByPriority, name='schedule-task-by-priority'),
     path('faultType/all', FaultTypeView.as_view(), name='fault-type'),
     path('machine-report/', FFTImageReportView.as_view(), name='machine-report'),
+    path('generate-oil-report/', OilAnalysisReportView.as_view(), name='generate_oil_report'),
     
     path('test', home)
 ]

@@ -1,13 +1,14 @@
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
-from Root.serializers.baseserializers import *
+from rest_framework import status, exceptions
+
 from Root.serializers.loginserializer import *
 from django.contrib.auth import authenticate
-from rest_framework import status, exceptions
-from rest_framework_simplejwt.authentication import JWTAuthentication
+from Root.models import User
 
 class ExampleView(APIView):
     permission_classes = [IsAuthenticated]

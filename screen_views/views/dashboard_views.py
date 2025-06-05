@@ -697,8 +697,8 @@ class CustomBearingLocationView(View):
             "mediumFrequencyNoOflines": bearing_location.mediumFrequencyNoOflines,
             "highFrequencyFmax": bearing_location.highFrequencyFmax,
             "highFrequencyNoOflines": bearing_location.highFrequencyNoOflines,
-            "created_at": bearing_location.created_at,
-            "updated_at": bearing_location.updated_at,
+            "createdAt": bearing_location.createdAt,
+            "updatedAt": bearing_location.updatedAt,
         }
 
         # Serialize related fields

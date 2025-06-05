@@ -5,4 +5,4 @@ from .dashboardSettings_views import *
 from .reports_view import *
 from .machine_views import *
 from .userReport_view import *
-
+from .oilAnalysisReport_views import *

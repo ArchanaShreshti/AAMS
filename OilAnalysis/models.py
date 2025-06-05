@@ -4,7 +4,7 @@ from Root.models import auto_admin_register
 from django.utils import timezone
 from Root.models import AlertLimits
 
-@auto_admin_register
+@auto_admin_register()
 class OilAnalysis(models.Model):
     id = ObjectIdAutoField(primary_key=True)
     machineID = models.ForeignKey('Root.Machine', on_delete=models.CASCADE, null=False)
@@ -42,7 +42,7 @@ class OilAnalysis(models.Model):
     def __str__(self):
         return f"OilAnalysis('{self.id}')"
     
-@auto_admin_register
+@auto_admin_register()
 class oilAnalysisAlert(models.Model):
     id = ObjectIdAutoField(primary_key=True)
     AssetId = models.ForeignKey('Root.Machine', on_delete=models.CASCADE, related_name='oil_analysis_alert_id')
@@ -55,7 +55,7 @@ class oilAnalysisAlert(models.Model):
     def __str__(self):
         return self.name
     
-@auto_admin_register
+@auto_admin_register()
 class AlertLimits(AlertLimits):
     class Meta:
         proxy = True

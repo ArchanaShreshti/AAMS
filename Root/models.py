@@ -52,7 +52,7 @@ class Customer(models.Model):
     latitude = models.CharField(max_length=100)  # Latitude as a string (may consider using FloatField)
     longitude = models.CharField(max_length=100)  # Longitude as a string (may consider using FloatField)
     areaId = models.ForeignKey(Area, on_delete=models.CASCADE, related_name='customer_areas', blank=True, null=True)  # Linking to Area
-    subareaId = models.ForeignKey(Area, on_delete=models.CASCADE, related_name='customer_subareas', blank=True, null=True)  # Linking to SubArea
+    subAreaId = models.ForeignKey(Area, on_delete=models.CASCADE, related_name='customer_subareas', blank=True, null=True)  # Linking to SubArea
     
     createdAt = models.DateTimeField(auto_now_add=True)
     updatedAt = models.DateTimeField(auto_now=True)
